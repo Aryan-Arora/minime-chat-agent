@@ -42,6 +42,8 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-10: GPT improved the no-build `web/` UI with persistent streaming activity, source chips, a memory-context disclosure driven by existing `status` events, and tighter phone-width layout; the SSE contract is unchanged.
+- 2026-11-10: GPT added additive memory interfaces in `src/types.ts` (`MemoryNote`, snapshots, and `NoteMemoryStore`) without changing existing signatures; implemented a Node SQLite store with date/conversation indexes, FTS5 note retrieval, extraction prompt schema, and volatile-claim re-check ledger. JSON remains the server fallback pending Claude's wiring.
 - 2026-11-10: Wrote memory design (notes, re-check ledger, SQLite+FTS, caching). Handing UI + memory layer to GPT; I review.
 - 2026-11-10: Anthropic adapter (fetch, streaming) in src/models; auto-used when ANTHROPIC_API_KEY set (defaults haiku-5-5 fast, sonnet-5-5 main). Untested against the live API: no key yet.
 - 2026-11-10: Added memory store (JSON file), agent loop, SSE server (port 3040), stub models, bench runner. All run keyless in stub mode; UI verified in browser. Next: real model adapters + keys, benchmark real models.

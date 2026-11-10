@@ -1,5 +1,5 @@
-// Dated chat memory in one JSON file. Chosen over SQLite for now: zero native deps, so
-// `npm install` always works, and the data is small. Swap behind MemoryStore if needed.
+// JSON remains the zero-dependency fallback. The SQLite implementation lives beside it
+// and implements the same MemoryStore methods, so the server can switch factories later.
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { MemoryStore, Message } from "../types.js";

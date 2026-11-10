@@ -56,6 +56,19 @@ function el(tag, cls, text) {
   list.appendChild(e);
   return e;
 }
+
+function detailBox(label, emptyText) {
+  const details = document.createElement("details");
+  details.className = "trace";
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  const body = document.createElement("div");
+  body.className = "trace-body empty";
+  body.textContent = emptyText;
+  details.append(summary, body);
+  list.appendChild(details);
+  return { details, body };
+}
 // Only scroll if the user is already near the bottom, so they can read earlier text mid-stream.
 function scroll(force) {
   if (force || list.scrollHeight - list.scrollTop - list.clientHeight < 120) list.scrollTop = list.scrollHeight;
@@ -73,10 +86,20 @@ async function send(message) {
   el("div", "msg user", message);
   const bot = el("div", "msg bot");
   bot.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; // typing indicator
-  let status = null, text = "", gotToken = false, finished = false;
+  const activity = detailBox("Activity", "Waiting for the agent…");
+  const context = detailBox("Memory context", "No memory context was reported for this answer.");
+  list.insertBefore(activity.details, bot);
+  list.insertBefore(context.details, bot);
+  let status = el("div", "status", "Connecting…"), text = "", gotToken = false, finished = false;
+  list.insertBefore(status, activity.details);
   scroll(true);
 
-  const clearStatus = () => { status?.remove(); status = null; };
+  const addTrace = (box, value) => {
+    if (box.classList.contains("empty")) { box.textContent = ""; box.classList.remove("empty"); }
+    const row = document.createElement("div");
+    row.textContent = value;
+    box.appendChild(row);
+  };
 
   try {
     const res = await fetch("/api/chat", {
@@ -92,15 +115,18 @@ async function send(message) {
 
     const handle = (ev) => {
       if (ev.type === "status") {
-        // Status lines go between the user bubble and the answer; replace the previous one.
-        if (!status) { status = el("div", "status"); list.insertBefore(status, bot); }
         status.textContent = ev.text;
+        addTrace(activity.body, ev.text);
+        // A status prefix adds memory transparency without changing the SSE event types.
+        if (/^(using memory|memory|past messages?|notes?):/i.test(ev.text)) addTrace(context.body, ev.text);
       } else if (ev.type === "token") {
-        clearStatus(); gotToken = true;
+        if (!gotToken) status.textContent = "Writing answer…";
+        gotToken = true;
         text += ev.text;
         bot.innerHTML = markdown(text); // re-render whole text: simple, and fast enough for chat-sized answers
       } else if (ev.type === "sources") {
         const box = el("div", "sources");
+        box.setAttribute("aria-label", "Sources used");
         ev.sources.forEach((s, i) => {
           const a = document.createElement("a");
           a.href = /^https?:\/\//.test(s.url) ? s.url : "#"; // same http(s)-only rule as markdown links
@@ -109,10 +135,13 @@ async function send(message) {
           a.title = s.url;
           box.appendChild(a);
         });
+        list.insertBefore(box, bot.nextSibling);
       } else if (ev.type === "error") {
         throw new Error(ev.text || "Something went wrong");
       } else if (ev.type === "done") {
         finished = true;
+        status.textContent = "Done";
+        status.classList.add("done");
       }
       scroll();
     };
@@ -135,11 +164,10 @@ async function send(message) {
     }
     if (!finished && !gotToken) throw new Error("The connection closed before an answer arrived");
   } catch (err) {
-    clearStatus();
+    status.remove();
     if (!gotToken) bot.remove(); // drop the empty bubble/typing dots; keep partial answers
     showError(err.message);
   } finally {
-    clearStatus();
     if (!gotToken) bot.querySelector(".typing")?.remove();
     streaming = false; sendBtn.disabled = false;
     input.focus();

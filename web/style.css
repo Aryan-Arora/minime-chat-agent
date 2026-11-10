@@ -61,7 +61,15 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .msg code { font: .9em ui-monospace, Menlo, Consolas, monospace; background: rgba(127,127,127,.2); padding: .1em .35em; border-radius: 4px; }
 .msg a { color: var(--accent); }
 
-.status { align-self: flex-start; color: var(--muted); font-size: .85rem; font-style: italic; padding: 0 4px; }
+.status { align-self: flex-start; color: var(--muted); font-size: .85rem; padding: 0 4px; }
+.status::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--accent); }
+.status.done::before { background: var(--muted); }
+
+.trace { align-self: flex-start; width: min(88%, 560px); color: var(--muted); font-size: .8rem; }
+.trace summary { cursor: pointer; width: fit-content; }
+.trace-body { margin-top: 5px; padding-left: 14px; border-left: 2px solid var(--border); }
+.trace-body div + div { margin-top: 3px; }
+.trace-body.empty { font-style: italic; }
 
 /* Three bouncing dots shown before the first token arrives. */
 .typing { display: inline-flex; gap: 4px; padding: 4px 0; }
@@ -88,3 +96,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 #input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 #send { background: var(--accent); color: #fff; border: none; padding: 0 18px; border-radius: 12px; }
+
+@media (max-width: 520px) {
+  .top, #messages { padding-left: 12px; padding-right: 12px; }
+  #composer { padding-left: 10px; padding-right: 10px; }
+  .msg, .sources, .trace { max-width: 94%; }
+  #send { padding: 0 13px; }
+  #input { min-width: 0; }
+}

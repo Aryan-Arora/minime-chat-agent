@@ -56,3 +56,49 @@ export interface MemoryStore {
   between(fromIso: string, toIso: string): Promise<Message[]>;
   recent(limit: number): Promise<Message[]>;
 }
+
+export type NoteVolatility = "stable" | "volatile";
+
+/** A compact fact extracted from one completed user/assistant exchange. */
+export interface MemoryNote {
+  id: string;
+  conversationId: string;
+  createdAt: string;
+  topic: string;
+  claim: string;
+  sources: string[];
+  query?: string;
+  volatility: NoteVolatility;
+}
+
+export interface MemoryDateRange {
+  from: string;
+  to: string;
+}
+
+/** Values are deliberately scalar so snapshots stay easy to compare and prompt. */
+export type SnapshotValue = string | number | boolean | null;
+
+export interface RecheckEntry {
+  id: string;
+  noteId: string;
+  conversationId: string;
+  createdAt: string;
+  query: string;
+  snapshot: Record<string, SnapshotValue>;
+}
+
+export interface SnapshotChange {
+  key: string;
+  before?: SnapshotValue;
+  after?: SnapshotValue;
+}
+
+/** SQLite adds compact retrieval without changing the existing MemoryStore contract. */
+export interface NoteMemoryStore extends MemoryStore {
+  saveNote(note: MemoryNote): Promise<void>;
+  retrieve(query: string, dateRange?: MemoryDateRange, limit?: number): Promise<MemoryNote[]>;
+  saveRecheck(entry: RecheckEntry): Promise<void>;
+  latestRecheck(noteId: string): Promise<RecheckEntry | null>;
+  close(): void;
+}
