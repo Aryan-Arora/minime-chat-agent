@@ -27,7 +27,7 @@ export type AgentEvent =
   | { type: "status"; text: string }
   | { type: "preview"; text: string }
   | { type: "token"; text: string }
-  | { type: "sources"; sources: { title: string; url: string }[] }
+  | { type: "sources"; sources: { title: string; url: string; publishedAt?: string }[] }
   | { type: "memory"; text: string; notes?: Pick<MemoryNote, "topic" | "claim" | "createdAt" | "volatility">[] }
   | { type: "error"; text: string }
   | { type: "done" };
@@ -228,7 +228,12 @@ export async function runAgent(
       emit({ type: "status", text: `Searching: ${query}` });
       try {
         results = await deps.search.search(query, { maxResults: 5 });
-        emit({ type: "sources", sources: results.map((r) => ({ title: r.title, url: r.url })) });
+        emit({
+          type: "sources",
+          sources: results.map((r) => ({
+            title: r.title, url: r.url, ...(r.publishedAt ? { publishedAt: r.publishedAt } : {}),
+          })),
+        });
       } catch (err) {
         searchFailed = true; // degrade gracefully: the answer prompt tells the model to say so
         console.error("[search] failed:", err instanceof Error ? err.message : err);

@@ -42,6 +42,7 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-11: GPT replaced the persistent process log with a post-answer `Sources & context` footer. Live thinking/search/writing remain temporary; the expandable footer now contains only exact memory notes and attributed web sources with domains, available dates, and counts.
 - 2026-11-11: Progressive-answer live benchmark: stable capital answer first token 1.47s (no router); cached Node.js quick preview 2.65s, detailed stream 3.73s, total 6.22s; hallucination-trap preview 3.89s, detailed 4.50s, total 6.34s. Preview adds a small Haiku cost but does not alter Sonnet depth.
 - 2026-11-11: GPT added stage-level latency measurement and progressive searched answers: the full Sonnet response starts immediately while low-effort Haiku races to show a labeled one-sentence preview, removed when detailed streaming begins. Conservative stable-fact patterns also skip routing; main evidence and depth are unchanged.
 - 2026-11-11: Post-optimization live comparison: current Node.js total fell 13.55s -> 7.58s (44%); Postgres hallucination trap 11.27s -> 6.97s (38%); stable fact 4.14s -> 3.36s (19%). A fresh process read the persisted five-result Tavily cache in 1ms. First-token variance remains provider-dependent.

@@ -87,28 +87,31 @@ async function send(message) {
   el("div", "msg user", message);
   const bot = el("div", "msg bot");
   bot.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; // typing indicator
-  const trace = detailBox("How this answer was made");
-  list.insertBefore(trace.details, bot);
-  trace.details.hidden = true;
+  const provenance = detailBox("Sources & context");
+  provenance.details.hidden = true;
   let status = el("div", "status", "Connecting…"), text = "", gotToken = false, finished = false;
   let hasPreview = false;
-  list.insertBefore(status, trace.details);
+  list.insertBefore(status, bot);
   scroll(true);
 
-  let traceCount = 0;
-  const addTrace = (kind, value) => {
-    trace.details.hidden = false;
-    const row = document.createElement("div");
-    row.className = `trace-row ${kind}`;
-    row.textContent = value;
-    trace.body.appendChild(row);
-    traceCount += 1;
-  };
-  const addMemoryNotes = (notes) => {
-    if (!Array.isArray(notes) || !notes.length) return;
+  let memoryNotes = [], memoryDescription = "", sourceList = [];
+  const renderProvenance = () => {
+    provenance.body.replaceChildren();
+    const parts = [];
+    if (sourceList.length) parts.push(`${sourceList.length} web source${sourceList.length === 1 ? "" : "s"}`);
+    if (memoryNotes.length) parts.push(`${memoryNotes.length} memory note${memoryNotes.length === 1 ? "" : "s"}`);
+    else if (memoryDescription) parts.push("past conversation");
+    provenance.details.hidden = !parts.length;
+    provenance.details.querySelector("summary").textContent = `Sources & context · ${parts.join(" · ")}`;
+
+    if (memoryNotes.length || memoryDescription) {
+      const heading = document.createElement("h3");
+      heading.textContent = "Memory used";
+      provenance.body.appendChild(heading);
+    }
     const group = document.createElement("div");
     group.className = "memory-cards";
-    for (const note of notes) {
+    for (const note of memoryNotes) {
       const card = document.createElement("article");
       card.className = "memory-card";
       const header = document.createElement("div");
@@ -116,14 +119,45 @@ async function send(message) {
       title.textContent = note.topic;
       const meta = document.createElement("span");
       const date = new Date(note.createdAt);
-      meta.textContent = `${Number.isNaN(date.valueOf()) ? note.createdAt : date.toLocaleDateString([], { month: "short", day: "numeric" })} · ${note.volatility}`;
+      const stability = note.volatility === "volatile" ? "May change" : "Stable";
+      meta.textContent = `${Number.isNaN(date.valueOf()) ? note.createdAt : date.toLocaleDateString([], { month: "short", day: "numeric" })} · ${stability}`;
       const claim = document.createElement("p");
       claim.textContent = note.claim;
       header.append(title, meta);
       card.append(header, claim);
       group.appendChild(card);
     }
-    trace.body.appendChild(group);
+    if (memoryNotes.length) provenance.body.appendChild(group);
+    else if (memoryDescription) {
+      const fallback = document.createElement("p");
+      fallback.className = "memory-fallback";
+      fallback.textContent = memoryDescription;
+      provenance.body.appendChild(fallback);
+    }
+
+    if (sourceList.length) {
+      const heading = document.createElement("h3");
+      heading.textContent = "Web sources";
+      const links = document.createElement("div");
+      links.className = "provenance-links";
+      sourceList.forEach((source, index) => {
+        const a = document.createElement("a");
+        a.href = /^https?:\/\//.test(source.url) ? source.url : "#";
+        a.target = "_blank"; a.rel = "noopener noreferrer";
+        let domain = source.url;
+        try { domain = new URL(source.url).hostname.replace(/^www\./, ""); } catch {}
+        const title = document.createElement("strong");
+        title.textContent = `${index + 1}. ${source.title || domain}`;
+        const meta = document.createElement("span");
+        const date = source.publishedAt ? new Date(source.publishedAt) : null;
+        const dateText = date && !Number.isNaN(date.valueOf())
+          ? ` · ${date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}` : "";
+        meta.textContent = `${domain}${dateText} ↗`;
+        a.append(title, meta);
+        links.appendChild(a);
+      });
+      provenance.body.append(heading, links);
+    }
   };
 
   try {
@@ -141,15 +175,15 @@ async function send(message) {
     const handle = (ev) => {
       if (ev.type === "status") {
         status.textContent = ev.text;
-        addTrace(ev.text.startsWith("Searching:") ? "search" : "think", ev.text);
       } else if (ev.type === "preview") {
         hasPreview = true;
         bot.classList.add("preview");
         bot.innerHTML = `<span class="preview-label">Quick take</span>${markdown(ev.text)}`;
         status.textContent = "Preparing the detailed answer…";
       } else if (ev.type === "memory") {
-        addTrace("memory", `Used ${ev.text}`);
-        addMemoryNotes(ev.notes);
+        memoryDescription = ev.text || "Past conversation context";
+        memoryNotes = Array.isArray(ev.notes) ? ev.notes : [];
+        renderProvenance();
       } else if (ev.type === "token") {
         if (!gotToken) {
           status.textContent = "Writing answer…";
@@ -159,25 +193,13 @@ async function send(message) {
         text += ev.text;
         bot.innerHTML = markdown(text); // re-render whole text: simple, and fast enough for chat-sized answers
       } else if (ev.type === "sources") {
-        const box = el("div", "sources");
-        box.setAttribute("aria-label", "Sources used");
-        ev.sources.forEach((s, i) => {
-          const a = document.createElement("a");
-          a.href = /^https?:\/\//.test(s.url) ? s.url : "#"; // same http(s)-only rule as markdown links
-          a.target = "_blank"; a.rel = "noopener noreferrer";
-          const number = document.createElement("span");
-          number.textContent = String(i + 1);
-          a.append(number, s.title || s.url);
-          a.title = s.url;
-          box.appendChild(a);
-        });
-        list.insertBefore(box, bot.nextSibling);
+        sourceList = Array.isArray(ev.sources) ? ev.sources : [];
+        renderProvenance();
       } else if (ev.type === "error") {
         throw new Error(ev.text || "Something went wrong");
       } else if (ev.type === "done") {
         finished = true;
         status.remove();
-        if (traceCount) trace.details.querySelector("summary").textContent = `How this answer was made · ${traceCount}`;
       }
       scroll();
     };
@@ -201,7 +223,7 @@ async function send(message) {
     if (!finished && !gotToken) throw new Error("The connection closed before an answer arrived");
   } catch (err) {
     status.remove();
-    if (!gotToken) bot.remove(); // drop the empty bubble/typing dots; keep partial answers
+    if (!gotToken) { bot.remove(); provenance.details.remove(); } // drop empty response furniture
     showError(err.message);
   } finally {
     if (!gotToken) bot.querySelector(".typing")?.remove();
