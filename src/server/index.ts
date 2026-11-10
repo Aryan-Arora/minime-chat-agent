@@ -65,7 +65,7 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url?.startsWith("/api/conversations")) {
       const all = await deps.memory.recent(1_000_000);
       const id = decodeURIComponent(req.url.slice("/api/conversations".length).replace(/^\//, ""));
-      res.writeHead(200, { "content-type": "application/json" });
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       if (id) {
         res.end(JSON.stringify(all.filter((m) => m.conversationId === id).map(({ role, content, createdAt }) => ({ role, content, createdAt }))));
         return;
@@ -90,11 +90,17 @@ const server = createServer(async (req, res) => {
       return;
     }
     // Static files. The resolve+startsWith check blocks ../ path traversal.
-    const rel = !req.url || req.url === "/" ? "index.html" : decodeURIComponent(req.url.split("?")[0]);
+    const pathname = decodeURIComponent((req.url ?? "/").split("?")[0]);
+    const rel = pathname === "/" ? "index.html" : pathname;
     const file = path.resolve(WEB, "." + path.sep + rel);
     if (!file.startsWith(WEB + path.sep)) { res.writeHead(403).end(); return; }
     const data = await fs.readFile(file);
-    res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream" }).end(data);
+    // The UI has no build pipeline to fingerprint assets, so never let an old destructive
+    // handler survive a deploy in browser cache.
+    res.writeHead(200, {
+      "content-type": TYPES[path.extname(file)] ?? "application/octet-stream",
+      "cache-control": "no-store",
+    }).end(data);
   } catch {
     if (!res.headersSent) res.writeHead(404).end("not found");
     else res.end();
