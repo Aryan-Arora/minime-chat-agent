@@ -359,16 +359,17 @@ $("new-chat").addEventListener("click", () => {
   loadHistory();
 });
 
-// Wipes the server-side memory (every past conversation), then starts fresh. Destructive and
-// irreversible, so it asks first; the DELETE only fires after the user confirms.
-$("clear-all").addEventListener("click", async () => {
+// Clear only the conversation on screen. Other chats and their memory remain untouched.
+$("clear-chat").addEventListener("click", async () => {
   if (streaming) return;
-  if (!confirm("Delete ALL conversation history, including past days MiniMe could recall? This cannot be undone.")) return;
+  const hasMessages = Boolean(list.querySelector(".msg"));
+  if (!hasMessages) return; // a brand-new chat has nothing persisted to delete
+  if (!confirm("Delete this conversation and its saved memory? Your other chats will stay.")) return;
   try {
-    const res = await fetch("/api/memory", { method: "DELETE" });
+    const res = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (err) {
-    alert(`Could not clear history: ${err.message}`);
+    alert(`Could not clear this chat: ${err.message}`);
     return; // keep the current chat on screen if the server did not clear
   }
   $("new-chat").click();
