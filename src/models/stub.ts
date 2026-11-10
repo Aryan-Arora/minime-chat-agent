@@ -8,6 +8,12 @@ export function createStubModel(name = "stub"): ModelAdapter {
   async function complete(req: Parameters<ModelAdapter["complete"]>[0]) {
     await sleep(40);
     const last = req.messages[req.messages.length - 1]?.content ?? "";
+    // Rough fake usage (4 chars ~ 1 token) so the bench's cost columns can be exercised.
+    req.onUsage?.({
+      inputTokens: Math.ceil((req.system.length + (req.context?.length ?? 0) + last.length) / 4),
+      outputTokens: 40,
+      cacheReadTokens: 0,
+    });
     // Router prompt asks for "SEARCH: <query>" or "NO". Cheap keyword heuristic here.
     if (req.system.includes("ROUTER")) {
       return /price|pricing|latest|news|changed|since|today|current/i.test(last)

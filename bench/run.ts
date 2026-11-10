@@ -4,6 +4,7 @@
 import { runAgent, type AgentDeps, type AgentEvent } from "../src/agent/loop.js";
 import type { MemoryStore, Message } from "../src/types.js";
 import { createStubModel, createStubSearch } from "../src/models/stub.js";
+import { costUsd } from "../src/models/pricing.js";
 
 const QUESTIONS = [
   "What did I ask you on 3 November?",
@@ -32,13 +33,15 @@ const PINNED_NOW = new Date("2026-11-10T12:00:00Z"); // fixed "today" so date ph
 
 async function runOne(deps: AgentDeps, q: string) {
   const t0 = performance.now();
-  let first = 0, searches = 0, error = "";
+  let first = 0, searches = 0, error = "", cost = 0, promptTokens = 0;
+  // Collect token usage from every model call this question makes (router + answer).
+  deps.onUsage = (model, u) => { cost += costUsd(model, u); promptTokens += u.inputTokens + u.cacheReadTokens; };
   await runAgent(deps, "bench", q, (e: AgentEvent) => {
     if (e.type === "token" && !first) first = performance.now() - t0;
     if (e.type === "sources") searches++;
     if (e.type === "error") error = e.text;
   });
-  return { first, total: performance.now() - t0, searches, error };
+  return { first, total: performance.now() - t0, searches, error, cost, promptTokens };
 }
 
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
@@ -60,6 +63,8 @@ async function main() {
         firstTokenMs: Math.round(median(runs.map((r) => r.first))),
         totalMs: Math.round(median(runs.map((r) => r.total))),
         searches: runs[0].searches,
+        promptTokens: runs[0].promptTokens,
+        costUsd: Number(median(runs.map((r) => r.cost)).toFixed(5)),
         error: runs.find((r) => r.error)?.error ?? "",
       });
     }

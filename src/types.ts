@@ -25,8 +25,20 @@ export interface SearchTool {
   search(query: string, opts?: { maxResults?: number; sinceDays?: number }): Promise<SearchResult[]>;
 }
 
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Input tokens served from the provider's prompt cache (billed far cheaper). */
+  cacheReadTokens: number;
+}
+
 export interface CompletionRequest {
+  /** Stable instructions. Kept identical across calls so the provider can cache them. */
   system: string;
+  /** Per-question material (today's date, memory notes, search results). Never cached. */
+  context?: string;
+  /** Called once per request with token counts, so benchmarks can compute cost. */
+  onUsage?: (u: Usage) => void;
   messages: Pick<Message, "role" | "content">[];
   maxTokens?: number;
 }
