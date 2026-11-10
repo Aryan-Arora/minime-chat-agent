@@ -16,8 +16,10 @@ export function createStubModel(name = "stub"): ModelAdapter {
     });
     // Router prompt asks for "SEARCH: <query>" or "NO". Cheap keyword heuristic here.
     if (req.system.includes("ROUTER")) {
-      return /price|pricing|latest|news|changed|since|today|current/i.test(last)
-        ? `SEARCH: ${last.slice(0, 120)}`
+      // The router input wraps the user's text; pull out just the latest message.
+      const latest = last.match(/Latest user message:\n([\s\S]*?)\n\nReply now/)?.[1] ?? last;
+      return /price|pricing|latest|news|changed|since|today|current/i.test(latest)
+        ? `SEARCH: ${latest.slice(0, 120)}`
         : "NO";
     }
     return `(stub answer) You said: "${last.slice(0, 200)}". Add a real model key to get a real answer.`;

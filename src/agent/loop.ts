@@ -83,25 +83,38 @@ export async function runAgent(
     if (pastChat.length && range) emit({ type: "memory", text: `${pastChat.length} messages from ${range.label}` });
     await deps.memory.save(userMsg);
 
-    const route = (
+    // The router gets the recent turns as ONE classification message (trimmed), not as real
+    // chat turns: as real turns a chatty model answers the user instead of classifying, and
+    // long earlier answers waste tokens. maxTokens is generous because some models spend part
+    // of the budget on hidden reasoning; at 80 that left an empty reply and silently skipped search.
+    const transcript = thisChat
+      .slice(-4)
+      .map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
+      .join("\n");
+    const routerInput = `${transcript ? `Recent conversation:\n${transcript}\n\n` : ""}Latest user message:\n${userText}\n\nReply now with exactly NO or SEARCH: <query>.`;
+    const rawRoute = (
       await deps.fast.complete({
         system: ROUTER_SYSTEM,
-        messages: [...thisChat.slice(-4), userMsg].map((m) => ({ role: m.role, content: m.content })),
-        maxTokens: 80,
+        messages: [{ role: "user", content: routerInput }],
+        maxTokens: 400,
         onUsage: track(deps.fast),
       })
     ).trim();
+    // Fail toward searching: an empty or unparseable reply must never mean "skip the web".
+    const sm = rawRoute.match(/SEARCH:\s*(.+)/i);
+    const query = sm ? sm[1].trim() : /^NO\b/i.test(rawRoute) ? "" : userText.slice(0, 200);
+    console.log(`[router] ${JSON.stringify(userText.slice(0, 60))} -> ${query ? `SEARCH ${JSON.stringify(query)}` : "NO"}${rawRoute && !sm && query ? " (unparseable reply, searching anyway)" : ""}`);
 
     let results: SearchResult[] = [];
     let searchFailed = false;
-    if (route.startsWith("SEARCH:")) {
-      const query = route.slice(7).trim();
+    if (query) {
       emit({ type: "status", text: `Searching: ${query}` });
       try {
         results = await deps.search.search(query, { maxResults: 5 });
         emit({ type: "sources", sources: results.map((r) => ({ title: r.title, url: r.url })) });
-      } catch {
+      } catch (err) {
         searchFailed = true; // degrade gracefully: the answer prompt tells the model to say so
+        console.error("[search] failed:", err instanceof Error ? err.message : err);
       }
     }
 
