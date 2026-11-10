@@ -42,6 +42,7 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-11: GPT disabled `DELETE /api/memory` with HTTP 410 as a server-side safety guard. Even a stale tab running the retired `Clear all` JavaScript can no longer erase global history; only scoped conversation deletion is allowed.
 - 2026-11-11: GPT diagnosed apparent global deletion as stale browser JavaScript: the live server correctly preserved a second chat in a two-conversation scope test, but static assets had no cache policy. Static/UI API responses now use `Cache-Control: no-store`, and CSS/JS URLs are versioned so old destructive handlers cannot survive reloads.
 - 2026-11-11: GPT changed the header action from global `Clear all` to scoped `Clear chat`; it deletes only the active conversation plus its notes/ledger, explicitly confirms that other chats remain, and does nothing on an empty new chat.
 - 2026-11-11: GPT made answer structure explicit: direct answer first, then short headings, bullets or numbered steps only when complexity warrants them. The safe no-dependency renderer now supports H2/H3, ordered lists, blockquotes, and improved spacing while still escaping all model HTML.

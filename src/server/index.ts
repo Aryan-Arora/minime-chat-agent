@@ -81,12 +81,11 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify([...byConv.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))));
       return;
     }
-    // Delete ALL stored conversation history. The UI asks the user to confirm first.
+    // Global deletion is intentionally unavailable. This also protects users who still
+    // have the old cached "Clear all" JavaScript open in a tab.
     if (req.method === "DELETE" && req.url === "/api/memory") {
-      if (!deps.memory.clear) { res.writeHead(501).end("this memory store cannot be cleared"); return; }
-      await deps.memory.clear();
-      console.log("[memory] cleared all history");
-      res.writeHead(204).end();
+      res.writeHead(410, { "content-type": "text/plain", "cache-control": "no-store" })
+        .end("Global history deletion is disabled. Delete one conversation instead.");
       return;
     }
     // Static files. The resolve+startsWith check blocks ../ path traversal.
