@@ -1,6 +1,9 @@
 // web_search wrapper. The agent only sees the SearchTool interface, so the provider
 // can be swapped without touching the loop. Default: Tavily (returns page text,
 // which we need to re-check old answers). Not final: see open decisions in CLAUDE.md.
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { SearchResult, SearchTool } from "../types.js";
 
 interface TavilyResult {
@@ -11,7 +14,19 @@ interface TavilyResult {
   published_date?: string;
 }
 
-export function createTavilySearch(apiKey = process.env.SEARCH_API_KEY): SearchTool {
+function cacheDb(file: string): DatabaseSync {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE IF NOT EXISTS search_cache (
+    cache_key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL, results TEXT NOT NULL
+  )`);
+  return db;
+}
+
+export function createTavilySearch(
+  apiKey = process.env.SEARCH_API_KEY,
+  cacheFile = path.resolve("data/search-cache.sqlite"),
+): SearchTool {
   if (!apiKey) throw new Error("SEARCH_API_KEY is not set (see .env.example)");
 
   // Tiny in-memory cache: the same query inside a session should not pay twice.
@@ -23,6 +38,17 @@ export function createTavilySearch(apiKey = process.env.SEARCH_API_KEY): SearchT
       const key = JSON.stringify([query, opts]);
       const hit = cache.get(key);
       if (hit && Date.now() - hit.at < TTL_MS) return hit.results;
+      // The SQLite cache survives restarts and is internal context, not another agent tool.
+      const db = cacheDb(cacheFile);
+      try {
+        const saved = db.prepare(`SELECT results FROM search_cache WHERE cache_key = ? AND expires_at > ?`)
+          .get(key, Date.now()) as { results: string } | undefined;
+        if (saved) {
+          const results = JSON.parse(saved.results) as SearchResult[];
+          cache.set(key, { at: Date.now(), results });
+          return results;
+        }
+      } finally { db.close(); }
 
       const res = await fetch("https://api.tavily.com/search", {
         method: "POST",
@@ -62,6 +88,13 @@ export function createTavilySearch(apiKey = process.env.SEARCH_API_KEY): SearchT
         if (results.length >= (opts.maxResults ?? 5)) break;
       }
       cache.set(key, { at: Date.now(), results });
+      const write = cacheDb(cacheFile);
+      try {
+        write.prepare(`INSERT INTO search_cache(cache_key, expires_at, results) VALUES (?, ?, ?)
+          ON CONFLICT(cache_key) DO UPDATE SET expires_at=excluded.expires_at, results=excluded.results`)
+          .run(key, Date.now() + TTL_MS, JSON.stringify(results));
+        write.prepare(`DELETE FROM search_cache WHERE expires_at <= ?`).run(Date.now());
+      } finally { write.close(); }
       return results;
     },
   };

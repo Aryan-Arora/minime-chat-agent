@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runAgent, type AgentEvent } from "../src/agent/loop.js";
+import { runAgent, waitForMemoryTasks, type AgentEvent } from "../src/agent/loop.js";
 import { diffSnapshots } from "../src/memory/ledger.js";
 import { parseNoteExtraction } from "../src/memory/notes.js";
 import { createSqliteMemory } from "../src/memory/sqlite.js";
@@ -52,6 +52,7 @@ test("agent stores, retrieves and re-checks a volatile note", async () => {
   const now = () => new Date("2026-11-10T12:00:00Z");
 
   await runAgent({ fast, main: fast, search, memory, now }, "chat", "What is the Acme hosting price?", () => {});
+  await waitForMemoryTasks("chat");
   const notes = await memory.retrieve("Acme hosting price");
   assert.equal(notes.length, 1);
   assert.deepEqual((await memory.latestRecheck(notes[0].id))?.snapshot, { monthly_price_usd: 10 });
@@ -63,7 +64,9 @@ test("agent stores, retrieves and re-checks a volatile note", async () => {
     "Has the Acme hosting price changed since last time?",
     (event) => events.push(event),
   );
-  assert.equal(searched.at(-1), "Acme plan price", "stored query should override the generic router query");
+  await waitForMemoryTasks("chat");
+  assert.equal(searched.at(-1), "What is the Acme hosting price?", "re-check should reuse the exact first query");
+  assert.equal(routerCalls, 0, "obvious freshness and stored-query routes should skip the model router");
   assert.equal(snapshotCalls, 1);
   assert.match(contexts.at(-1) ?? "", /"before": 10/);
   assert.match(contexts.at(-1) ?? "", /"after": 12/);

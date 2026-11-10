@@ -1,7 +1,7 @@
 // Small paid-API benchmark for the configured fast/main pair. Kept separate from `bench`
 // so normal development and CI remain keyless and free.
 import { randomUUID } from "node:crypto";
-import { runAgent, type AgentEvent } from "../src/agent/loop.js";
+import { runAgent, waitForMemoryTasks, type AgentEvent } from "../src/agent/loop.js";
 import { createSqliteMemory } from "../src/memory/sqlite.js";
 import { createModels } from "../src/models/index.js";
 import { costUsd } from "../src/models/pricing.js";
@@ -31,9 +31,12 @@ for (const question of questions) {
     if (event.type === "sources") searches += 1;
     if (event.type === "error") error = event.text;
   });
+  // Include background memory cost in the report without adding it to user-visible latency.
+  const userVisibleTotal = performance.now() - started;
+  await waitForMemoryTasks();
   rows.push({
     question: question.slice(0, 48), firstTokenMs: Math.round(firstToken),
-    totalMs: Math.round(performance.now() - started), searches, tokens,
+    totalMs: Math.round(userVisibleTotal), searches, tokens,
     costUsd: Number(cost.toFixed(5)), error,
   });
 }

@@ -41,6 +41,8 @@ export interface CompletionRequest {
   onUsage?: (u: Usage) => void;
   messages: Pick<Message, "role" | "content">[];
   maxTokens?: number;
+  /** Lower effort is useful for constrained routing/extraction; omit for full-quality answers. */
+  effort?: "low" | "medium" | "high";
 }
 
 export interface ModelAdapter {

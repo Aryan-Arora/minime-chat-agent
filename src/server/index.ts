@@ -3,7 +3,7 @@
 import { createServer } from "node:http";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { runAgent, type AgentDeps } from "../agent/loop.js";
+import { runAgent, waitForMemoryTasks, type AgentDeps } from "../agent/loop.js";
 import { createFileMemory } from "../memory/store.js";
 import { createSqliteMemory, migrateJsonMemory } from "../memory/sqlite.js";
 import type { MemoryStore, NoteMemoryStore } from "../types.js";
@@ -106,7 +106,8 @@ server.listen(Number(process.env.PORT ?? 3040), () =>
 
 // Finish active requests, checkpoint SQLite's WAL, then exit.
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => server.close(() => {
+  process.once(signal, () => server.close(async () => {
+    await waitForMemoryTasks();
     (memory as Partial<NoteMemoryStore>).close?.();
     process.exit(0);
   }));

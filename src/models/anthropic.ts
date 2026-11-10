@@ -19,6 +19,7 @@ export function createAnthropicModel(model: string, apiKey = process.env.ANTHROP
       body: JSON.stringify({
         model,
         max_tokens: req.maxTokens ?? 1024,
+        ...(req.effort ? { output_config: { effort: req.effort } } : {}),
         system,
         // The API only knows user/assistant; "tool" turns are not used yet.
         messages: req.messages.filter((m) => m.role !== "tool"),

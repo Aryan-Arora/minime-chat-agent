@@ -42,6 +42,8 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-11: Post-optimization live comparison: current Node.js total fell 13.55s -> 7.58s (44%); Postgres hallucination trap 11.27s -> 6.97s (38%); stable fact 4.14s -> 3.36s (19%). A fresh process read the persisted five-result Tavily cache in 1ms. First-token variance remains provider-dependent.
+- 2026-11-11: GPT reduced latency without weakening memory: note extraction now runs after `done` but the next same-chat turn awaits it; high-confidence fresh/memory/chitchat routes are deterministic; volatile re-checks skip routing and reuse their stored query; extraction uses Anthropic low effort while the writer remains full quality; Tavily results have a 10-minute persistent SQLite cache.
 - 2026-11-11: Live configured-pair benchmark passed with no errors: capital question 2.54s first token / 4.14s total / $0.00057; current Node.js question 6.79s / 13.55s / $0.01518; Postgres hallucination trap 5.27s / 11.27s / $0.01029. Deterministic memory benchmark: 100% top-result accuracy on 3 cases and 95% fewer context characters than transcripts (small synthetic set; do not overclaim).
 - 2026-11-11: GPT added an opt-in `bench:live` command for the configured Anthropic/Tavily pair; it records first-token and total latency, searches, tokens, estimated cost, and errors while keeping the default benchmark keyless.
 - 2026-11-11: GPT added FTS stop-word handling for date-only recall, search URL deduplication and domain diversity, graceful SQLite shutdown, automated memory integration tests, and a deterministic `bench:memory` report for top-result accuracy and context reduction.

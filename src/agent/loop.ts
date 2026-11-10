@@ -100,6 +100,15 @@ function noteStore(memory: MemoryStore): NoteMemoryStore | null {
 
 const PAST_CUE = /\b(remember|earlier|previous|before|last time|we discussed|we decided|i asked|you said|re-?check|changed since|still)\b/i;
 const RECHECK_CUE = /\b(re-?check|changed|change since|still|now|current|latest|today)\b/i;
+const FRESH_CUE = /\b(latest|current|today|news|price|pricing|version|release|available|availability)\b/i;
+const AMBIGUOUS_REFERENCE = /\b(it|they|them|that|those|one|ones|second|first|best)\b/i;
+const pendingMemory = new Map<string, Promise<void>>();
+
+/** Tests and graceful shutdown use this; normal requests only await their own conversation. */
+export async function waitForMemoryTasks(conversationId?: string): Promise<void> {
+  if (conversationId) await pendingMemory.get(conversationId);
+  else await Promise.allSettled([...pendingMemory.values()]);
+}
 
 export async function runAgent(
   deps: AgentDeps,
@@ -110,6 +119,8 @@ export async function runAgent(
   const now = (deps.now ?? (() => new Date()))();
   const track = (m: ModelAdapter) => (u: Usage) => deps.onUsage?.(m.name, u);
   try {
+    // A fast follow-up must see the note from the turn that just finished streaming.
+    await waitForMemoryTasks(conversationId);
     const userMsg: Message = {
       id: randomUUID(), role: "user", content: userText, createdAt: now.toISOString(), conversationId,
     };
@@ -147,24 +158,41 @@ export async function runAgent(
       .map((m) => `${m.role}: ${m.content.slice(0, 300)}`)
       .join("\n");
     const routerInput = `${transcript ? `Recent conversation:\n${transcript}\n\n` : ""}Latest user message:\n${userText}\n\nReply now with exactly NO or SEARCH: <query>.`;
-    const rawRoute = (
-      await deps.fast.complete({
-        system: ROUTER_SYSTEM,
-        messages: [{ role: "user", content: routerInput }],
-        maxTokens: 400,
-        onUsage: track(deps.fast),
-      })
-    ).trim();
-    // Fail toward searching: an empty or unparseable reply must never mean "skip the web".
-    const sm = rawRoute.match(/SEARCH:\s*(.+)/i);
-    let query = sm ? sm[1].trim() : /^NO\b/i.test(rawRoute) ? "" : userText.slice(0, 200);
     const volatileNote = retrievedNotes.find((note) => note.volatility === "volatile" && note.query);
     const previousSnapshot = compact && volatileNote && RECHECK_CUE.test(userText)
       ? await compact.latestRecheck(volatileNote.id)
       : null;
-    // A saved volatile query is more precise than asking the router to reconstruct it.
-    if (previousSnapshot && volatileNote?.query) query = volatileNote.query;
-    console.log(`[router] ${JSON.stringify(userText.slice(0, 60))} -> ${query ? `SEARCH ${JSON.stringify(query)}` : "NO"}${rawRoute && !sm && query ? " (unparseable reply, searching anyway)" : ""}`);
+    let query: string;
+    let routeSource: string;
+    if (previousSnapshot && volatileNote?.query) {
+      // Re-checks already have the exact query that produced the old snapshot.
+      query = volatileNote.query;
+      routeSource = "stored query";
+    } else if (shouldRecall && !FRESH_CUE.test(userText)) {
+      query = "";
+      routeSource = "memory-only rule";
+    } else if (FRESH_CUE.test(userText) && !AMBIGUOUS_REFERENCE.test(userText)) {
+      query = userText.slice(0, 200);
+      routeSource = "freshness rule";
+    } else if (/^\s*(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))\b/i.test(userText)) {
+      query = "";
+      routeSource = "chitchat rule";
+    } else {
+      const rawRoute = (
+        await deps.fast.complete({
+          system: ROUTER_SYSTEM,
+          messages: [{ role: "user", content: routerInput }],
+          maxTokens: 400,
+          effort: "medium",
+          onUsage: track(deps.fast),
+        })
+      ).trim();
+      // Fail toward searching: an empty or unparseable reply must never mean "skip the web".
+      const sm = rawRoute.match(/SEARCH:\s*(.+)/i);
+      query = sm ? sm[1].trim() : /^NO\b/i.test(rawRoute) ? "" : userText.slice(0, 200);
+      routeSource = sm || /^NO\b/i.test(rawRoute) ? "model" : "model fallback";
+    }
+    console.log(`[router] ${JSON.stringify(userText.slice(0, 60))} -> ${query ? `SEARCH ${JSON.stringify(query)}` : "NO"} (${routeSource})`);
 
     let results: SearchResult[] = [];
     let searchFailed = false;
@@ -186,6 +214,7 @@ export async function runAgent(
         messages: [{ role: "user", content: buildSnapshotExtractionPrompt(volatileNote.claim, previousSnapshot.snapshot, results) }],
         // Reasoning models may spend much of this budget invisibly before emitting JSON.
         maxTokens: 1400,
+        effort: "low",
         onUsage: track(deps.fast),
       });
       const currentSnapshot = parseSnapshot(rawSnapshot);
@@ -215,9 +244,10 @@ export async function runAgent(
     };
     await deps.memory.save(assistantMsg);
 
+    emit({ type: "done" });
     if (compact) {
-      emit({ type: "status", text: "Saving useful memory" });
-      try {
+      const task = (async () => {
+        try {
         const rawNote = await deps.fast.complete({
           system: NOTE_EXTRACTION_SYSTEM,
           messages: [{
@@ -228,6 +258,7 @@ export async function runAgent(
             }),
           }],
           maxTokens: 1400,
+          effort: "low",
           onUsage: track(deps.fast),
         });
         const parsed = parseNoteExtraction(rawNote, {
@@ -248,12 +279,16 @@ export async function runAgent(
             });
           }
         }
-      } catch (error) {
+        } catch (error) {
         // The answer is already safely stored; extraction failure must not fail the turn.
         console.warn("[memory] note extraction failed:", error instanceof Error ? error.message : error);
-      }
+        }
+      })();
+      pendingMemory.set(conversationId, task);
+      void task.finally(() => {
+        if (pendingMemory.get(conversationId) === task) pendingMemory.delete(conversationId);
+      });
     }
-    emit({ type: "done" });
   } catch (err) {
     emit({ type: "error", text: err instanceof Error ? err.message : String(err) });
   }
