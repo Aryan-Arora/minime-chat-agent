@@ -29,4 +29,5 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-10: Added memory store (JSON file), agent loop, SSE server (port 3040), stub models, bench runner. All run keyless in stub mode; UI verified in browser. Next: real model adapters + keys, benchmark real models.
 - 2026-11-10: Created this file; scaffolding repo and shared types.
