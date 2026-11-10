@@ -91,6 +91,7 @@ async function send(message) {
   list.insertBefore(trace.details, bot);
   trace.details.hidden = true;
   let status = el("div", "status", "Connecting…"), text = "", gotToken = false, finished = false;
+  let hasPreview = false;
   list.insertBefore(status, trace.details);
   scroll(true);
 
@@ -141,11 +142,19 @@ async function send(message) {
       if (ev.type === "status") {
         status.textContent = ev.text;
         addTrace(ev.text.startsWith("Searching:") ? "search" : "think", ev.text);
+      } else if (ev.type === "preview") {
+        hasPreview = true;
+        bot.classList.add("preview");
+        bot.innerHTML = `<span class="preview-label">Quick take</span>${markdown(ev.text)}`;
+        status.textContent = "Preparing the detailed answer…";
       } else if (ev.type === "memory") {
         addTrace("memory", `Used ${ev.text}`);
         addMemoryNotes(ev.notes);
       } else if (ev.type === "token") {
-        if (!gotToken) status.textContent = "Writing answer…";
+        if (!gotToken) {
+          status.textContent = "Writing answer…";
+          if (hasPreview) { bot.classList.remove("preview"); text = ""; }
+        }
         gotToken = true;
         text += ev.text;
         bot.innerHTML = markdown(text); // re-render whole text: simple, and fast enough for chat-sized answers

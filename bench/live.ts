@@ -1,7 +1,7 @@
 // Small paid-API benchmark for the configured fast/main pair. Kept separate from `bench`
 // so normal development and CI remain keyless and free.
 import { randomUUID } from "node:crypto";
-import { runAgent, waitForMemoryTasks, type AgentEvent } from "../src/agent/loop.js";
+import { runAgent, waitForMemoryTasks, type AgentEvent, type AgentTiming } from "../src/agent/loop.js";
 import { createSqliteMemory } from "../src/memory/sqlite.js";
 import { createModels } from "../src/models/index.js";
 import { costUsd } from "../src/models/pricing.js";
@@ -19,15 +19,18 @@ const questions = [
 const rows = [];
 for (const question of questions) {
   const started = performance.now();
-  let firstToken = 0, searches = 0, tokens = 0, cost = 0, error = "";
+  let firstToken = 0, preview = 0, searches = 0, tokens = 0, cost = 0, error = "";
+  let timing: AgentTiming | undefined;
   await runAgent({
     fast: models.fast, main: models.main, search: createTavilySearch(), memory,
     onUsage(model, usage) {
       tokens += usage.inputTokens + usage.cacheReadTokens + usage.outputTokens;
       cost += costUsd(model, usage);
     },
+    onTiming(value) { timing = value; },
   }, randomUUID(), question, (event: AgentEvent) => {
     if (event.type === "token" && !firstToken) firstToken = performance.now() - started;
+    if (event.type === "preview" && !preview) preview = performance.now() - started;
     if (event.type === "sources") searches += 1;
     if (event.type === "error") error = event.text;
   });
@@ -36,7 +39,10 @@ for (const question of questions) {
   await waitForMemoryTasks();
   rows.push({
     question: question.slice(0, 48), firstTokenMs: Math.round(firstToken),
+    previewMs: Math.round(preview),
     totalMs: Math.round(userVisibleTotal), searches, tokens,
+    routerMs: timing?.routerMs ?? 0, searchMs: timing?.searchMs ?? 0,
+    modelStartupMs: timing?.modelStartupMs ?? 0, streamMs: timing?.streamMs ?? 0,
     costUsd: Number(cost.toFixed(5)), error,
   });
 }

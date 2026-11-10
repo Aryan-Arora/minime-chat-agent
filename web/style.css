@@ -62,6 +62,8 @@ button, textarea { font: inherit; } button { color: inherit; }
 .msg { overflow-wrap: anywhere; animation: enter .25s ease both; }
 .msg.user { width: fit-content; max-width: min(580px, 88%); margin: 0 max(0px, calc((100% - 680px) / 2)) 26px auto; padding: 11px 15px; color: white; background: var(--moss); border-radius: 16px 16px 4px 16px; white-space: pre-wrap; }
 .msg.bot { margin-top: 6px; color: var(--ink); font-size: 1rem; }
+.msg.bot.preview { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft-green); }
+.preview-label { display: block; margin-bottom: 5px; color: var(--moss); font-size: .68rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .msg p { margin: 0 0 .75em; } .msg > :last-child { margin-bottom: 0; }
 .msg ul { margin: 0 0 .75em; padding-left: 1.3em; }
 .msg code { padding: .12em .38em; border-radius: 5px; background: #eef0e9; font: .88em ui-monospace, SFMono-Regular, Menlo, monospace; }
