@@ -36,12 +36,26 @@ function inline(raw) {
 
 function markdown(text) {
   const out = [];
-  let para = [], items = [];
+  let para = [], items = [], listType = "";
   const flushPara = () => { if (para.length) out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; };
-  const flushList = () => { if (items.length) out.push(`<ul>${items.map((i) => `<li>${inline(i)}</li>`).join("")}</ul>`); items = []; };
+  const flushList = () => {
+    if (items.length) out.push(`<${listType}>${items.map((i) => `<li>${inline(i)}</li>`).join("")}</${listType}>`);
+    items = []; listType = "";
+  };
+  const startList = (type, value) => {
+    flushPara();
+    if (listType && listType !== type) flushList();
+    listType = type; items.push(value);
+  };
   for (const line of text.split("\n")) {
+    const heading = line.match(/^(#{2,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.*)$/);
-    if (bullet) { flushPara(); items.push(bullet[1]); }
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const quote = line.match(/^>\s?(.*)$/);
+    if (heading) { flushPara(); flushList(); out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); }
+    else if (bullet) startList("ul", bullet[1]);
+    else if (numbered) startList("ol", numbered[1]);
+    else if (quote) { flushPara(); flushList(); out.push(`<blockquote>${inline(quote[1])}</blockquote>`); }
     else if (!line.trim()) { flushPara(); flushList(); }
     else { flushList(); para.push(line); }
   }

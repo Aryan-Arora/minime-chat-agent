@@ -42,6 +42,7 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-11: GPT made answer structure explicit: direct answer first, then short headings, bullets or numbered steps only when complexity warrants them. The safe no-dependency renderer now supports H2/H3, ordered lists, blockquotes, and improved spacing while still escaping all model HTML.
 - 2026-11-11: GPT replaced the persistent process log with a post-answer `Sources & context` footer. Live thinking/search/writing remain temporary; the expandable footer now contains only exact memory notes and attributed web sources with domains, available dates, and counts.
 - 2026-11-11: Progressive-answer live benchmark: stable capital answer first token 1.47s (no router); cached Node.js quick preview 2.65s, detailed stream 3.73s, total 6.22s; hallucination-trap preview 3.89s, detailed 4.50s, total 6.34s. Preview adds a small Haiku cost but does not alter Sonnet depth.
 - 2026-11-11: GPT added stage-level latency measurement and progressive searched answers: the full Sonnet response starts immediately while low-effort Haiku races to show a labeled one-sentence preview, removed when detailed streaming begins. Conservative stable-fact patterns also skip routing; main evidence and depth are unchanged.

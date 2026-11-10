@@ -60,7 +60,10 @@ Do not search for: stable facts, chit-chat, questions about this conversation.
 Use the recent conversation to resolve follow-ups ("the second one") into a full query.`;
 
 // Stable on purpose: no dates, no per-question data, so the provider can cache it.
-const ANSWER_SYSTEM = `You are a fast, direct chat assistant. Be short, no padding.
+const ANSWER_SYSTEM = `You are a fast, direct chat assistant. Be concise but complete, with no padding.
+Lead with the direct answer. For anything beyond a one-paragraph reply, organize the rest with short ## headings and bullets.
+Use numbered steps for procedures and bold labels for compact comparisons. Do not add headings to a simple answer.
+Keep paragraphs short and put caveats beside the claim they qualify instead of in a generic disclaimer section.
 When earlier conversation is provided, use its timestamps to answer questions about what was asked and when.
 If asked to re-check an earlier answer, compare it with the fresh web results and say plainly what changed and what did not.
 Cite web results as [n]. If sources conflict, say so. If the question assumes something that does not exist, say that.

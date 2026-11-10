@@ -65,7 +65,11 @@ button, textarea { font: inherit; } button { color: inherit; }
 .msg.bot.preview { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft-green); }
 .preview-label { display: block; margin-bottom: 5px; color: var(--moss); font-size: .68rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .msg p { margin: 0 0 .75em; } .msg > :last-child { margin-bottom: 0; }
-.msg ul { margin: 0 0 .75em; padding-left: 1.3em; }
+.msg h2, .msg h3 { margin: 1.15em 0 .45em; color: var(--ink); line-height: 1.25; letter-spacing: -.015em; }
+.msg h2 { font-size: 1.08rem; } .msg h3 { font-size: .98rem; }
+.msg ul, .msg ol { margin: 0 0 .8em; padding-left: 1.35em; }
+.msg li + li { margin-top: .28em; }
+.msg blockquote { margin: .8em 0; padding: .15em 0 .15em 12px; color: var(--muted); border-left: 3px solid #b9c8bb; }
 .msg code { padding: .12em .38em; border-radius: 5px; background: #eef0e9; font: .88em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .msg a { color: var(--moss); text-decoration-color: #aebcaf; text-underline-offset: 3px; }
 
