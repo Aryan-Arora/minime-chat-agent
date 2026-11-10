@@ -6,28 +6,42 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>MiniMe</title>
-  <link rel="stylesheet" href="style.css?v=20261111-2" />
+  <link rel="stylesheet" href="style.css?v=20261111-4" />
 </head>
 <body>
+  <div class="ambient" aria-hidden="true"><span></span><span></span></div>
   <div class="app-shell">
-    <aside class="brand-panel">
-      <a class="brand" href="/" aria-label="MiniMe home"><span class="brand-mark">M</span><span>MiniMe</span></a>
+    <aside id="sidebar" class="brand-panel" aria-label="Conversation sidebar">
+      <div class="sidebar-top">
+        <a class="brand" href="/" aria-label="MiniMe home">
+          <span class="brand-mark"><i></i></span><span>MiniMe</span>
+        </a>
+        <button id="sidebar-close" class="icon-button sidebar-close" type="button" aria-label="Close conversations">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+        </button>
+      </div>
       <div class="brand-copy">
-        <p class="eyebrow">Search, with a memory</p>
-        <h1>Answers that know where you left off.</h1>
-        <p>MiniMe remembers the useful parts, checks what changed, and shows its work.</p>
+        <p class="eyebrow">Search that remembers</p>
+        <h1>Research without starting over.</h1>
+        <p>Fresh evidence, durable context, and a clear record of what changed.</p>
       </div>
       <nav class="history" aria-label="Your conversations">
-        <p class="eyebrow">Your chats</p>
+        <div class="section-label"><span>Conversations</span><span class="history-count" id="history-count"></span></div>
         <ul id="history"><li class="history-empty">No chats yet</li></ul>
       </nav>
-      <div class="memory-note"><span></span> Dated memory · Fresh sources</div>
+      <div class="memory-note"><span></span><div><strong>Memory is active</strong><small>Dated notes · Fresh sources</small></div></div>
     </aside>
+    <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="Close conversations"></button>
 
     <section class="chat-panel">
       <header class="top">
-        <div class="mobile-brand"><span class="brand-mark">M</span><strong>MiniMe</strong></div>
-        <div class="chat-title"><span class="online-dot"></span> Web-aware assistant</div>
+        <div class="top-identity">
+          <button id="sidebar-toggle" class="icon-button menu-button" type="button" aria-label="Open conversations" aria-controls="sidebar" aria-expanded="false">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h10"/></svg>
+          </button>
+          <div class="mobile-brand"><span class="brand-mark"><i></i></span><strong>MiniMe</strong></div>
+          <div class="chat-title"><span class="online-dot"></span><div><strong>Research assistant</strong><small>Web-aware · Memory on</small></div></div>
+        </div>
         <div class="top-actions">
           <button id="clear-chat" class="quiet-button danger" type="button" aria-label="Delete the current conversation">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg> Clear chat
@@ -40,13 +54,13 @@
 
       <main id="messages" aria-live="polite">
         <section id="welcome" class="welcome">
-          <p class="eyebrow">Ask the web. Keep the context.</p>
-          <h2>What are we figuring out?</h2>
-          <p>I can research something new, recall a dated conversation, or re-check an old answer.</p>
+          <div class="welcome-badge"><span></span> Ready to research</div>
+          <h2>Ask once.<br><em>Pick up anywhere.</em></h2>
+          <p>Research the live web, revisit a past decision, or check exactly what changed.</p>
           <div class="suggestions" aria-label="Example questions">
-            <button type="button">What changed in AI this week?</button>
-            <button type="button">What did I ask last Tuesday?</button>
-            <button type="button">Re-check the prices we compared</button>
+            <button type="button" data-prompt="What changed in AI this week?"><span class="suggestion-icon">↗</span><span><strong>Explore what’s current</strong><small>What changed in AI this week?</small></span></button>
+            <button type="button" data-prompt="What did I ask last Tuesday?"><span class="suggestion-icon">◷</span><span><strong>Recall a conversation</strong><small>What did I ask last Tuesday?</small></span></button>
+            <button type="button" data-prompt="Re-check the prices we compared"><span class="suggestion-icon">↻</span><span><strong>Check what changed</strong><small>Re-check the prices we compared</small></span></button>
           </div>
         </section>
       </main>
@@ -58,12 +72,12 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 5-5 5 5M10 5v10"/></svg>
           </button>
         </form>
-        <p>Enter to send · Shift + Enter for a new line</p>
+        <p><span>Enter to send</span><span>Shift + Enter for a new line</span></p>
       </div>
     </section>
   </div>
 
   <!-- type=module: scoped, strict, deferred. No bundler needed. -->
-  <script type="module" src="app.js?v=20261111-2"></script>
+  <script type="module" src="app.js?v=20261111-4"></script>
 </body>
 </html>

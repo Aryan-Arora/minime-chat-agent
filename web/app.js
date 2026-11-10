@@ -18,6 +18,17 @@ function loadId() {
 }
 let conversationId = loadId();
 
+// ---------- mobile conversation drawer ----------
+const sidebarToggle = $("sidebar-toggle");
+function setSidebar(open) {
+  document.body.classList.toggle("sidebar-open", open);
+  sidebarToggle.setAttribute("aria-expanded", String(open));
+}
+sidebarToggle.addEventListener("click", () => setSidebar(!document.body.classList.contains("sidebar-open")));
+$("sidebar-close").addEventListener("click", () => setSidebar(false));
+$("sidebar-scrim").addEventListener("click", () => setSidebar(false));
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") setSidebar(false); });
+
 // ---------- tiny safe markdown ----------
 // Safety strategy: escape ALL html first, then add only tags we generate ourselves.
 // Since "<" is already "&lt;", model output can never inject markup.
@@ -255,6 +266,7 @@ async function loadHistory() {
     const res = await fetch("/api/conversations");
     if (!res.ok) throw new Error(String(res.status));
     const chats = await res.json();
+    $("history-count").textContent = chats.length ? String(chats.length) : "";
     ul.replaceChildren();
     if (!chats.length) {
       const li = document.createElement("li");
@@ -306,6 +318,7 @@ async function openChat(id, force = false) {
     const msgs = await res.json();
     if (!msgs.length) return; // nothing stored yet (e.g. a brand-new chat): keep the welcome screen
     conversationId = id;
+    setSidebar(false);
     try { localStorage.setItem(KEY, id); } catch {}
     list.replaceChildren();
     for (const m of msgs) {
@@ -354,6 +367,7 @@ $("new-chat").addEventListener("click", () => {
   conversationId = crypto.randomUUID();
   try { localStorage.setItem(KEY, conversationId); } catch {}
   list.innerHTML = welcomeMarkup;
+  setSidebar(false);
   bindSuggestions();
   input.focus();
   loadHistory();
@@ -377,7 +391,7 @@ $("clear-chat").addEventListener("click", async () => {
 
 function bindSuggestions() {
   list.querySelectorAll(".suggestions button").forEach((button) => {
-    button.addEventListener("click", () => send(button.textContent));
+    button.addEventListener("click", () => send(button.dataset.prompt || button.textContent));
   });
 }
 
