@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
@@ -39,7 +39,14 @@ function recheck(row: RecheckRow): RecheckEntry {
 
 // Quoted word tokens avoid exposing callers to FTS5 operators and malformed MATCH input.
 function ftsQuery(input: string): string {
+  const stop = new Set([
+    "a", "an", "and", "about", "asked", "before", "changed", "did", "do", "from", "has", "have", "i", "in", "is", "it",
+    "last", "me", "my", "now", "on", "re", "remember", "said", "since", "still", "the", "this", "time", "to", "today", "was",
+    "we", "what", "when", "which", "you", "your", "yesterday", "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  ]);
   return (input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
+    .filter((word) => !stop.has(word) && !/^\d{1,4}$/.test(word))
     .map((word) => `"${word.replaceAll('"', '""')}"`)
     .join(" OR ");
 }
@@ -80,6 +87,9 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     );
     CREATE INDEX IF NOT EXISTS rechecks_note ON rechecks(note_id, created_at);
     CREATE INDEX IF NOT EXISTS rechecks_conversation ON rechecks(conversation_id, created_at);
+    CREATE TABLE IF NOT EXISTS metadata (
+      key TEXT PRIMARY KEY, value TEXT NOT NULL
+    );
   `);
 
   return {
@@ -133,6 +143,29 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
         .get(noteId) as unknown as RecheckRow | undefined;
       return row ? recheck(row) : null;
     },
+    async deleteConversation(conversationId) {
+      // Delete derived memory with its transcript so it cannot affect later answers.
+      db.exec("BEGIN");
+      try {
+        db.prepare(`DELETE FROM rechecks WHERE conversation_id = ?`).run(conversationId);
+        db.prepare(`DELETE FROM notes WHERE conversation_id = ?`).run(conversationId);
+        db.prepare(`DELETE FROM messages WHERE conversation_id = ?`).run(conversationId);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    async clear() {
+      db.exec("BEGIN");
+      try {
+        db.exec("DELETE FROM rechecks; DELETE FROM notes; DELETE FROM messages;");
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
     close() { db.close(); },
   };
 }
@@ -158,4 +191,43 @@ export function importMessages(dbFile: string, messages: Message[]): number {
     db.close();
   }
   return inserted;
+}
+
+/** Import the legacy JSON log once. The marker prevents deleted chats returning on restart. */
+export function migrateJsonMemory(
+  jsonFile = path.resolve("data/memory.json"),
+  dbFile = path.resolve("data/memory.sqlite"),
+): number {
+  let messages: Message[];
+  try {
+    messages = JSON.parse(readFileSync(jsonFile, "utf8")) as Message[];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error; // corrupt history is surfaced rather than silently discarded
+  }
+  if (!Array.isArray(messages)) throw new Error(`${jsonFile} must contain a message array`);
+
+  createSqliteMemory(dbFile).close();
+  const db = new DatabaseSync(dbFile);
+  const marker = "legacy-json-v1";
+  if (db.prepare(`SELECT 1 FROM metadata WHERE key = ?`).get(marker)) { db.close(); return 0; }
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO messages(id, role, content, created_at, conversation_id) VALUES (?, ?, ?, ?, ?)`,
+  );
+  let imported = 0;
+  db.exec("BEGIN");
+  try {
+    for (const item of messages) {
+      if (!item?.id || !item.createdAt || !item.conversationId) throw new Error("legacy memory contains an invalid message");
+      imported += Number(insert.run(item.id, item.role, item.content, item.createdAt, item.conversationId).changes);
+    }
+    db.prepare(`INSERT INTO metadata(key, value) VALUES (?, ?)`).run(marker, new Date().toISOString());
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+  return imported;
 }

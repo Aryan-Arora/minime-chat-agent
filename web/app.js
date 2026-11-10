@@ -103,6 +103,27 @@ async function send(message) {
     trace.body.appendChild(row);
     traceCount += 1;
   };
+  const addMemoryNotes = (notes) => {
+    if (!Array.isArray(notes) || !notes.length) return;
+    const group = document.createElement("div");
+    group.className = "memory-cards";
+    for (const note of notes) {
+      const card = document.createElement("article");
+      card.className = "memory-card";
+      const header = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = note.topic;
+      const meta = document.createElement("span");
+      const date = new Date(note.createdAt);
+      meta.textContent = `${Number.isNaN(date.valueOf()) ? note.createdAt : date.toLocaleDateString([], { month: "short", day: "numeric" })} · ${note.volatility}`;
+      const claim = document.createElement("p");
+      claim.textContent = note.claim;
+      header.append(title, meta);
+      card.append(header, claim);
+      group.appendChild(card);
+    }
+    trace.body.appendChild(group);
+  };
 
   try {
     const res = await fetch("/api/chat", {
@@ -122,6 +143,7 @@ async function send(message) {
         addTrace(ev.text.startsWith("Searching:") ? "search" : "think", ev.text);
       } else if (ev.type === "memory") {
         addTrace("memory", `Used ${ev.text}`);
+        addMemoryNotes(ev.notes);
       } else if (ev.type === "token") {
         if (!gotToken) status.textContent = "Writing answer…";
         gotToken = true;

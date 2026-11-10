@@ -5,6 +5,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { runAgent, type AgentDeps } from "../agent/loop.js";
 import { createFileMemory } from "../memory/store.js";
+import { createSqliteMemory, migrateJsonMemory } from "../memory/sqlite.js";
+import type { MemoryStore, NoteMemoryStore } from "../types.js";
 import { createModels } from "../models/index.js";
 import { createStubSearch } from "../models/stub.js";
 import { createTavilySearch } from "../tools/search.js";
@@ -14,17 +16,29 @@ try { process.loadEnvFile(".env"); } catch { /* no .env yet: run in stub mode */
 const live = Boolean(process.env.SEARCH_API_KEY);
 // Each piece goes live independently when its key exists; otherwise a stub stands in.
 const models = createModels();
+let memory: MemoryStore;
+let memoryName = "SQLite";
+try {
+  const imported = migrateJsonMemory();
+  memory = createSqliteMemory();
+  if (imported) console.log(`[memory] migrated ${imported} messages from JSON to SQLite`);
+} catch (error) {
+  // JSON keeps the app usable on runtimes without SQLite; never hide why fallback happened.
+  memoryName = "JSON fallback";
+  console.warn(`[memory] SQLite unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  memory = createFileMemory();
+}
 const deps: AgentDeps = {
   fast: models.fast,
   main: models.main,
   search: live ? createTavilySearch() : createStubSearch(),
-  memory: createFileMemory(),
+  memory,
 };
 
 const WEB = path.resolve("web");
 const TYPES: Record<string, string> = { ".html": "text/html", ".css": "text/css", ".js": "text/javascript" };
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   try {
     if (req.method === "POST" && req.url === "/api/chat") {
       let body = "";
@@ -85,6 +99,15 @@ createServer(async (req, res) => {
     if (!res.headersSent) res.writeHead(404).end("not found");
     else res.end();
   }
-}).listen(Number(process.env.PORT ?? 3040), () =>
-  console.log(`http://localhost:${process.env.PORT ?? 3040}  (models: ${models.live ? "Anthropic" : "stub"}, search: ${live ? "Tavily" : "stub"})`),
+});
+server.listen(Number(process.env.PORT ?? 3040), () =>
+  console.log(`http://localhost:${process.env.PORT ?? 3040}  (models: ${models.live ? "Anthropic" : "stub"}, search: ${live ? "Tavily" : "stub"}, memory: ${memoryName})`),
 );
+
+// Finish active requests, checkpoint SQLite's WAL, then exit.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => server.close(() => {
+    (memory as Partial<NoteMemoryStore>).close?.();
+    process.exit(0);
+  }));
+}

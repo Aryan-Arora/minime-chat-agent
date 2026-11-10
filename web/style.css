@@ -78,6 +78,12 @@ button, textarea { font: inherit; } button { color: inherit; }
 .trace-body { display: grid; gap: 6px; margin: 9px 0 0 2px; padding: 10px 12px; border-left: 2px solid #d8dfd7; background: linear-gradient(90deg, #f4f7f1, transparent); }
 .trace-row::before { display: inline-block; width: 18px; color: var(--moss); }
 .trace-row.think::before { content: "·"; } .trace-row.search::before { content: "⌕"; } .trace-row.memory::before { content: "◷"; }
+.memory-cards { display: grid; gap: 7px; margin: 3px 0 2px 18px; }
+.memory-card { padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.memory-card > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.memory-card strong { color: var(--ink); font-size: .78rem; }
+.memory-card span { flex: 0 0 auto; color: var(--muted); font-size: .66rem; text-transform: capitalize; }
+.memory-card p { margin: 4px 0 0; color: var(--muted); line-height: 1.4; }
 
 .sources { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 18px; }
 .sources a { display: inline-flex; align-items: center; gap: 7px; max-width: 240px; padding: 6px 10px 6px 7px; color: var(--ink); border: 1px solid var(--line); border-radius: 999px; text-decoration: none; font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: border-color .18s ease, transform .18s ease; }

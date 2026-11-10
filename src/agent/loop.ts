@@ -8,13 +8,26 @@
 // Events are emitted as they happen so the UI feels fast.
 import { randomUUID } from "node:crypto";
 import { resolveDate } from "../memory/dates.js";
-import type { MemoryStore, Message, ModelAdapter, SearchResult, SearchTool, Usage } from "../types.js";
+import { diffSnapshots } from "../memory/ledger.js";
+import {
+  buildNoteExtractionPrompt,
+  buildSnapshotExtractionPrompt,
+  NOTE_EXTRACTION_SYSTEM,
+  parseNoteExtraction,
+  parseSnapshot,
+  SNAPSHOT_EXTRACTION_SYSTEM,
+  snapshotFromNoteExtraction,
+} from "../memory/notes.js";
+import type {
+  MemoryNote, MemoryStore, Message, ModelAdapter, NoteMemoryStore, SearchResult,
+  SearchTool, SnapshotChange, Usage,
+} from "../types.js";
 
 export type AgentEvent =
   | { type: "status"; text: string }
   | { type: "token"; text: string }
   | { type: "sources"; sources: { title: string; url: string }[] }
-  | { type: "memory"; text: string } // what past material was used, e.g. "3 messages from last tuesday"
+  | { type: "memory"; text: string; notes?: Pick<MemoryNote, "topic" | "claim" | "createdAt" | "volatility">[] }
   | { type: "error"; text: string }
   | { type: "done" };
 
@@ -42,8 +55,21 @@ Cite web results as [n]. If sources conflict, say so. If the question assumes so
 If the question is vague, ask one clarifying question instead of guessing.
 If a search failed or returned nothing, say you could not check the web instead of guessing.`;
 
-function buildContext(today: string, pastChat: Message[], results: SearchResult[], searchFailed: boolean): string {
+function buildContext(
+  today: string,
+  pastChat: Message[],
+  notes: MemoryNote[],
+  results: SearchResult[],
+  searchFailed: boolean,
+  changes: SnapshotChange[],
+): string {
   const parts = [`Today is ${today}.`];
+  if (notes.length) {
+    parts.push(
+      `Relevant memory notes (compact records, not fresh evidence):\n` +
+        notes.map((note) => `[${note.createdAt}] ${note.topic}: ${note.claim}`).join("\n"),
+    );
+  }
   if (pastChat.length) {
     parts.push(
       `Earlier conversation from the date the user mentioned:\n` +
@@ -59,8 +85,21 @@ function buildContext(today: string, pastChat: Message[], results: SearchResult[
     );
   }
   if (searchFailed) parts.push("The web search failed. Tell the user you could not check the web.");
+  if (changes.length) {
+    parts.push(`Structured changes since the saved snapshot:\n${JSON.stringify(changes, null, 2)}`);
+  }
   return parts.join("\n\n");
 }
+
+function noteStore(memory: MemoryStore): NoteMemoryStore | null {
+  const candidate = memory as Partial<NoteMemoryStore>;
+  return typeof candidate.retrieve === "function" && typeof candidate.saveNote === "function"
+    ? candidate as NoteMemoryStore
+    : null;
+}
+
+const PAST_CUE = /\b(remember|earlier|previous|before|last time|we discussed|we decided|i asked|you said|re-?check|changed since|still)\b/i;
+const RECHECK_CUE = /\b(re-?check|changed|change since|still|now|current|latest|today)\b/i;
 
 export async function runAgent(
   deps: AgentDeps,
@@ -78,9 +117,25 @@ export async function runAgent(
 
     // Memory lookup happens BEFORE saving this message, so "today" doesn't echo it back.
     const range = resolveDate(userText, now);
-    const pastChat = range ? await deps.memory.between(range.from, range.to) : [];
-    const thisChat = (await deps.memory.recent(200)).filter((m) => m.conversationId === conversationId).slice(-10);
-    if (pastChat.length && range) emit({ type: "memory", text: `${pastChat.length} messages from ${range.label}` });
+    const compact = noteStore(deps.memory);
+    const shouldRecall = Boolean(range || PAST_CUE.test(userText));
+    // Note retrieval and recent-chat loading are independent and run together.
+    const [retrievedNotes, recent] = await Promise.all([
+      compact && shouldRecall ? compact.retrieve(userText, range ?? undefined, 5) : Promise.resolve([]),
+      deps.memory.recent(200),
+    ]);
+    // Old history may predate note extraction, so raw dated messages are a temporary fallback.
+    const pastChat = !retrievedNotes.length && range ? await deps.memory.between(range.from, range.to) : [];
+    const thisChat = recent.filter((m) => m.conversationId === conversationId).slice(-10);
+    if (retrievedNotes.length) {
+      emit({
+        type: "memory",
+        text: `${retrievedNotes.length} relevant note${retrievedNotes.length === 1 ? "" : "s"}`,
+        notes: retrievedNotes.map(({ topic, claim, createdAt, volatility }) => ({ topic, claim, createdAt, volatility })),
+      });
+    } else if (pastChat.length && range) {
+      emit({ type: "memory", text: `${pastChat.length} messages from ${range.label}` });
+    }
     await deps.memory.save(userMsg);
 
     // The router gets the recent turns as ONE classification message (trimmed), not as real
@@ -102,11 +157,18 @@ export async function runAgent(
     ).trim();
     // Fail toward searching: an empty or unparseable reply must never mean "skip the web".
     const sm = rawRoute.match(/SEARCH:\s*(.+)/i);
-    const query = sm ? sm[1].trim() : /^NO\b/i.test(rawRoute) ? "" : userText.slice(0, 200);
+    let query = sm ? sm[1].trim() : /^NO\b/i.test(rawRoute) ? "" : userText.slice(0, 200);
+    const volatileNote = retrievedNotes.find((note) => note.volatility === "volatile" && note.query);
+    const previousSnapshot = compact && volatileNote && RECHECK_CUE.test(userText)
+      ? await compact.latestRecheck(volatileNote.id)
+      : null;
+    // A saved volatile query is more precise than asking the router to reconstruct it.
+    if (previousSnapshot && volatileNote?.query) query = volatileNote.query;
     console.log(`[router] ${JSON.stringify(userText.slice(0, 60))} -> ${query ? `SEARCH ${JSON.stringify(query)}` : "NO"}${rawRoute && !sm && query ? " (unparseable reply, searching anyway)" : ""}`);
 
     let results: SearchResult[] = [];
     let searchFailed = false;
+    let changes: SnapshotChange[] = [];
     if (query) {
       emit({ type: "status", text: `Searching: ${query}` });
       try {
@@ -118,10 +180,28 @@ export async function runAgent(
       }
     }
 
+    if (compact && volatileNote && previousSnapshot && results.length) {
+      const rawSnapshot = await deps.fast.complete({
+        system: SNAPSHOT_EXTRACTION_SYSTEM,
+        messages: [{ role: "user", content: buildSnapshotExtractionPrompt(volatileNote.claim, previousSnapshot.snapshot, results) }],
+        // Reasoning models may spend much of this budget invisibly before emitting JSON.
+        maxTokens: 1400,
+        onUsage: track(deps.fast),
+      });
+      const currentSnapshot = parseSnapshot(rawSnapshot);
+      if (Object.keys(currentSnapshot).length) {
+        changes = diffSnapshots(previousSnapshot.snapshot, currentSnapshot);
+        await compact.saveRecheck({
+          id: randomUUID(), noteId: volatileNote.id, conversationId,
+          createdAt: now.toISOString(), query, snapshot: currentSnapshot,
+        });
+      }
+    }
+
     let answer = "";
     for await (const chunk of deps.main.stream({
       system: ANSWER_SYSTEM,
-      context: buildContext(now.toISOString().slice(0, 10), pastChat, results, searchFailed),
+      context: buildContext(now.toISOString().slice(0, 10), pastChat, retrievedNotes, results, searchFailed, changes),
       messages: [...thisChat, userMsg].map((m) => ({ role: m.role, content: m.content })),
       onUsage: track(deps.main),
     })) {
@@ -129,10 +209,50 @@ export async function runAgent(
       emit({ type: "token", text: chunk });
     }
 
-    await deps.memory.save({
+    const assistantMsg: Message = {
       id: randomUUID(), role: "assistant", content: answer,
       createdAt: new Date().toISOString(), conversationId,
-    });
+    };
+    await deps.memory.save(assistantMsg);
+
+    if (compact) {
+      emit({ type: "status", text: "Saving useful memory" });
+      try {
+        const rawNote = await deps.fast.complete({
+          system: NOTE_EXTRACTION_SYSTEM,
+          messages: [{
+            role: "user",
+            content: buildNoteExtractionPrompt(userMsg, assistantMsg, {
+              ...(query ? { query } : {}),
+              sources: results.map((result) => result.url),
+            }),
+          }],
+          maxTokens: 1400,
+          onUsage: track(deps.fast),
+        });
+        const parsed = parseNoteExtraction(rawNote, {
+          id: randomUUID(), conversationId, createdAt: assistantMsg.createdAt,
+        });
+        if (parsed) {
+          const savedNote: MemoryNote = {
+            ...parsed,
+            ...(query ? { query } : {}),
+            sources: results.length ? results.map((result) => result.url) : parsed.sources,
+          };
+          await compact.saveNote(savedNote);
+          const snapshot = snapshotFromNoteExtraction(rawNote);
+          if (savedNote.volatility === "volatile" && savedNote.query && Object.keys(snapshot).length) {
+            await compact.saveRecheck({
+              id: randomUUID(), noteId: savedNote.id, conversationId,
+              createdAt: assistantMsg.createdAt, query: savedNote.query, snapshot,
+            });
+          }
+        }
+      } catch (error) {
+        // The answer is already safely stored; extraction failure must not fail the turn.
+        console.warn("[memory] note extraction failed:", error instanceof Error ? error.message : error);
+      }
+    }
     emit({ type: "done" });
   } catch (err) {
     emit({ type: "error", text: err instanceof Error ? err.message : String(err) });

@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
+    "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "bench": "tsx bench/run.ts"
+    "bench": "tsx bench/run.ts",
+    "bench:memory": "tsx bench/memory.ts",
+    "bench:live": "tsx bench/live.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

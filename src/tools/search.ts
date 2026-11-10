@@ -29,7 +29,8 @@ export function createTavilySearch(apiKey = process.env.SEARCH_API_KEY): SearchT
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           query,
-          max_results: opts.maxResults ?? 5,
+          // Ask for extras so deduplication can still return a diverse final set.
+          max_results: Math.min((opts.maxResults ?? 5) * 2, 10),
           include_raw_content: false,
           // sinceDays lets the agent ask "what changed lately" instead of all-time results.
           ...(opts.sinceDays ? { days: opts.sinceDays, topic: "news" } : {}),
@@ -39,13 +40,27 @@ export function createTavilySearch(apiKey = process.env.SEARCH_API_KEY): SearchT
       if (!res.ok) throw new Error(`search failed: ${res.status} ${await res.text()}`);
 
       const data = (await res.json()) as { results: TavilyResult[] };
-      const results: SearchResult[] = data.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        snippet: r.content.slice(0, 300),
-        content: r.content,
-        publishedAt: r.published_date,
-      }));
+      const seen = new Set<string>();
+      const domains = new Map<string, number>();
+      const results: SearchResult[] = [];
+      for (const r of data.results) {
+        let normalized: string;
+        let domain: string;
+        try {
+          const url = new URL(r.url);
+          url.hash = ""; url.search = "";
+          normalized = url.toString().replace(/\/$/, "");
+          domain = url.hostname.replace(/^www\./, "");
+        } catch { continue; }
+        // At most two pages per domain keeps one publisher from crowding out corroboration.
+        if (seen.has(normalized) || (domains.get(domain) ?? 0) >= 2) continue;
+        seen.add(normalized); domains.set(domain, (domains.get(domain) ?? 0) + 1);
+        results.push({
+          title: r.title, url: r.url, snippet: r.content.slice(0, 300), content: r.content,
+          ...(r.published_date ? { publishedAt: r.published_date } : {}),
+        });
+        if (results.length >= (opts.maxResults ?? 5)) break;
+      }
       cache.set(key, { at: Date.now(), results });
       return results;
     },
