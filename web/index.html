@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- viewport-fit + width=device-width makes the layout work at phone width -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>MiniMe</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>MiniMe</h1>
+    <button id="new-chat" type="button">New chat</button>
+  </header>
+
+  <!-- aria-live so screen readers hear new answers as they stream in -->
+  <main id="messages" aria-live="polite"></main>
+
+  <form id="composer" autocomplete="off">
+    <textarea id="input" rows="1" placeholder="Ask anything (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
+    <button id="send" type="submit">Send</button>
+  </form>
+
+  <!-- type=module: scoped, strict, deferred. No bundler needed. -->
+  <script type="module" src="app.js"></script>
+</body>
+</html>

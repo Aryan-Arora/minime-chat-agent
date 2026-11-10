@@ -1,0 +1,90 @@
+/* Colours live in variables so dark mode is just a second set of values. */
+:root {
+  --bg: #ffffff;
+  --fg: #1c1c1e;
+  --muted: #6e6e73;
+  --user-bg: #1c1c1e;
+  --user-fg: #ffffff;
+  --bot-bg: #f2f2f4;
+  --border: #e0e0e4;
+  --accent: #2563eb;
+  --error: #b42318;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111113;
+    --fg: #ececf0;
+    --muted: #9a9aa3;
+    --user-bg: #3b3b44;
+    --user-fg: #ffffff;
+    --bot-bg: #1c1c20;
+    --border: #2c2c32;
+    --accent: #7aa2ff;
+    --error: #ff8a80;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; /* system fonts: no CDN */
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.top h1 { font-size: 1.05rem; margin: 0; }
+button {
+  font: inherit; cursor: pointer; border-radius: 8px;
+  border: 1px solid var(--border); background: transparent; color: var(--fg);
+  padding: 6px 12px;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+/* The message list is the only scrolling region, so header/composer stay put. */
+#messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+.msg { max-width: 88%; padding: 10px 14px; border-radius: 16px; overflow-wrap: anywhere; }
+.msg.user { align-self: flex-end; background: var(--user-bg); color: var(--user-fg); white-space: pre-wrap; }
+.msg.bot { align-self: flex-start; background: var(--bot-bg); }
+.msg p { margin: 0 0 .6em; }
+.msg > :last-child { margin-bottom: 0; }
+.msg ul { margin: 0 0 .6em; padding-left: 1.3em; }
+.msg code { font: .9em ui-monospace, Menlo, Consolas, monospace; background: rgba(127,127,127,.2); padding: .1em .35em; border-radius: 4px; }
+.msg a { color: var(--accent); }
+
+.status { align-self: flex-start; color: var(--muted); font-size: .85rem; font-style: italic; padding: 0 4px; }
+
+/* Three bouncing dots shown before the first token arrives. */
+.typing { display: inline-flex; gap: 4px; padding: 4px 0; }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: bounce 1.2s infinite ease-in-out; }
+.typing i:nth-child(2) { animation-delay: .15s; }
+.typing i:nth-child(3) { animation-delay: .3s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; } }
+
+.sources { align-self: flex-start; display: flex; flex-wrap: wrap; gap: 6px; max-width: 88%; }
+.sources a {
+  font-size: .8rem; text-decoration: none; color: var(--fg);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sources a:hover { border-color: var(--accent); color: var(--accent); }
+
+.error { align-self: flex-start; color: var(--error); font-size: .9rem; display: flex; gap: 10px; align-items: center; }
+
+#composer { display: flex; gap: 8px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+#input {
+  flex: 1; resize: none; max-height: 160px; font: inherit; color: inherit;
+  background: var(--bot-bg); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px;
+}
+#input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#send { background: var(--accent); color: #fff; border: none; padding: 0 18px; border-radius: 12px; }
