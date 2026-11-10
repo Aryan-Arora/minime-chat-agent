@@ -1,4 +1,4 @@
-import type { Message } from "../types.js";
+import type { MemoryNote, Message, NoteVolatility } from "../types.js";
 
 export const NOTE_EXTRACTION_SYSTEM = `Extract one compact memory note from a completed chat exchange.
 Return JSON only with: topic, claim, sources, query, volatility.
@@ -15,4 +15,34 @@ export function buildNoteExtractionPrompt(user: Message, assistant: Message): st
     `User: ${user.content}`,
     `Assistant: ${assistant.content}`,
   ].join("\n");
+}
+
+type NoteMeta = Pick<MemoryNote, "id" | "conversationId" | "createdAt">;
+
+/** Validate model output before it crosses the storage boundary. */
+export function parseNoteExtraction(raw: string, meta: NoteMeta): MemoryNote | null {
+  let value: unknown;
+  try {
+    // Some models still wrap requested JSON in a fence; accept that harmless wrapper.
+    const json = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    value = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  const topic = clean(item.topic, 120);
+  const claim = clean(item.claim, 800);
+  if (!topic || !claim) return null; // empty claims are intentionally not remembered
+
+  const volatility: NoteVolatility = item.volatility === "volatile" ? "volatile" : "stable";
+  const sources = Array.isArray(item.sources)
+    ? [...new Set(item.sources.filter((source): source is string => typeof source === "string" && /^https?:\/\//.test(source)))].slice(0, 8)
+    : [];
+  const query = clean(item.query, 240);
+  return { ...meta, topic, claim, sources, ...(query ? { query } : {}), volatility };
+}
+
+function clean(value: unknown, limit: number): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, limit) : "";
 }

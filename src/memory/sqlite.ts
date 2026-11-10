@@ -109,14 +109,18 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     },
     async retrieve(query: string, dateRange?: MemoryDateRange, limit = 5) {
       const match = ftsQuery(query);
-      if (!match || limit <= 0) return [];
+      const count = Math.min(Math.max(0, Math.floor(limit)), 20);
+      if (!count) return [];
       const dateSql = dateRange ? `AND n.created_at >= ? AND n.created_at < ?` : "";
-      const params = dateRange
-        ? [match, dateRange.from, dateRange.to, limit]
-        : [match, limit];
-      const rows = db.prepare(`SELECT n.* FROM notes_fts f JOIN notes n ON n.rowid = f.rowid
-        WHERE notes_fts MATCH ? ${dateSql} ORDER BY bm25(notes_fts), n.created_at DESC LIMIT ?`)
-        .all(...params) as unknown as NoteRow[];
+      // A date-only lookup returns the latest notes; otherwise rank topic above claim.
+      const sql = match
+        ? `SELECT n.* FROM notes_fts f JOIN notes n ON n.rowid = f.rowid
+           WHERE notes_fts MATCH ? ${dateSql} ORDER BY bm25(notes_fts, 2.0, 1.0), n.created_at DESC LIMIT ?`
+        : `SELECT n.* FROM notes n WHERE 1=1 ${dateSql} ORDER BY n.created_at DESC LIMIT ?`;
+      const params = match
+        ? (dateRange ? [match, dateRange.from, dateRange.to, count] : [match, count])
+        : (dateRange ? [dateRange.from, dateRange.to, count] : [count]);
+      const rows = db.prepare(sql).all(...params) as unknown as NoteRow[];
       return rows.map(note);
     },
     async saveRecheck(value) {
@@ -131,4 +135,27 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     },
     close() { db.close(); },
   };
+}
+
+/** One-time importer for the old JSON store. INSERT OR IGNORE makes retries safe. */
+export function importMessages(dbFile: string, messages: Message[]): number {
+  if (dbFile !== ":memory:") mkdirSync(path.dirname(dbFile), { recursive: true });
+  // Ensure the schema exists when importing into a brand-new database.
+  createSqliteMemory(dbFile).close();
+  const db = new DatabaseSync(dbFile);
+  let inserted = 0;
+  const statement = db.prepare(
+    `INSERT OR IGNORE INTO messages(id, role, content, created_at, conversation_id) VALUES (?, ?, ?, ?, ?)`,
+  );
+  db.exec("BEGIN");
+  try {
+    for (const item of messages) inserted += Number(statement.run(item.id, item.role, item.content, item.createdAt, item.conversationId).changes);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.close();
+  }
+  return inserted;
 }

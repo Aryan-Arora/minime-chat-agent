@@ -3,6 +3,7 @@
 
 const $ = (id) => document.getElementById(id);
 const list = $("messages"), input = $("input"), sendBtn = $("send");
+const welcomeMarkup = $("welcome").outerHTML;
 
 // ---------- conversation id ----------
 // The server keys memory by this id, so it must survive page reloads.
@@ -57,14 +58,13 @@ function el(tag, cls, text) {
   return e;
 }
 
-function detailBox(label, emptyText) {
+function detailBox(label) {
   const details = document.createElement("details");
   details.className = "trace";
   const summary = document.createElement("summary");
   summary.textContent = label;
   const body = document.createElement("div");
-  body.className = "trace-body empty";
-  body.textContent = emptyText;
+  body.className = "trace-body";
   details.append(summary, body);
   list.appendChild(details);
   return { details, body };
@@ -82,23 +82,26 @@ async function send(message) {
   if (streaming || !message.trim()) return;
   streaming = true; sendBtn.disabled = true;
   lastMessage = message;
+  $("welcome")?.remove();
 
   el("div", "msg user", message);
   const bot = el("div", "msg bot");
   bot.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; // typing indicator
-  const activity = detailBox("Activity", "Waiting for the agent…");
-  const context = detailBox("Memory context", "No memory context was reported for this answer.");
-  list.insertBefore(activity.details, bot);
-  list.insertBefore(context.details, bot);
+  const trace = detailBox("How this answer was made");
+  list.insertBefore(trace.details, bot);
+  trace.details.hidden = true;
   let status = el("div", "status", "Connecting…"), text = "", gotToken = false, finished = false;
-  list.insertBefore(status, activity.details);
+  list.insertBefore(status, trace.details);
   scroll(true);
 
-  const addTrace = (box, value) => {
-    if (box.classList.contains("empty")) { box.textContent = ""; box.classList.remove("empty"); }
+  let traceCount = 0;
+  const addTrace = (kind, value) => {
+    trace.details.hidden = false;
     const row = document.createElement("div");
+    row.className = `trace-row ${kind}`;
     row.textContent = value;
-    box.appendChild(row);
+    trace.body.appendChild(row);
+    traceCount += 1;
   };
 
   try {
@@ -116,9 +119,9 @@ async function send(message) {
     const handle = (ev) => {
       if (ev.type === "status") {
         status.textContent = ev.text;
-        addTrace(activity.body, ev.text);
-        // A status prefix adds memory transparency without changing the SSE event types.
-        if (/^(using memory|memory|past messages?|notes?):/i.test(ev.text)) addTrace(context.body, ev.text);
+        addTrace(ev.text.startsWith("Searching:") ? "search" : "think", ev.text);
+      } else if (ev.type === "memory") {
+        addTrace("memory", `Used ${ev.text}`);
       } else if (ev.type === "token") {
         if (!gotToken) status.textContent = "Writing answer…";
         gotToken = true;
@@ -131,7 +134,9 @@ async function send(message) {
           const a = document.createElement("a");
           a.href = /^https?:\/\//.test(s.url) ? s.url : "#"; // same http(s)-only rule as markdown links
           a.target = "_blank"; a.rel = "noopener noreferrer";
-          a.textContent = `${i + 1}. ${s.title || s.url}`;
+          const number = document.createElement("span");
+          number.textContent = String(i + 1);
+          a.append(number, s.title || s.url);
           a.title = s.url;
           box.appendChild(a);
         });
@@ -140,8 +145,8 @@ async function send(message) {
         throw new Error(ev.text || "Something went wrong");
       } else if (ev.type === "done") {
         finished = true;
-        status.textContent = "Done";
-        status.classList.add("done");
+        status.remove();
+        if (traceCount) trace.details.querySelector("summary").textContent = `How this answer was made · ${traceCount}`;
       }
       scroll();
     };
@@ -171,7 +176,78 @@ async function send(message) {
     if (!gotToken) bot.querySelector(".typing")?.remove();
     streaming = false; sendBtn.disabled = false;
     input.focus();
+    loadHistory(); // the finished exchange is now in memory: refresh the sidebar
   }
+}
+
+// ---------- sidebar: all chats ----------
+// Titles/times come from the server's message log. textContent only: titles are user text.
+async function loadHistory() {
+  const ul = $("history");
+  try {
+    const res = await fetch("/api/conversations");
+    if (!res.ok) throw new Error(String(res.status));
+    const chats = await res.json();
+    ul.replaceChildren();
+    if (!chats.length) {
+      const li = document.createElement("li");
+      li.className = "history-empty"; li.textContent = "No chats yet";
+      ul.appendChild(li);
+      return;
+    }
+    for (const c of chats) {
+      const li = document.createElement("li");
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "history-item";
+      b.setAttribute("aria-current", String(c.id === conversationId));
+      b.textContent = c.title || "New chat";
+      const when = document.createElement("small");
+      when.textContent = `${new Date(c.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · ${c.messages} messages`;
+      b.appendChild(when);
+      b.addEventListener("click", () => openChat(c.id));
+      // Separate button (not nested in the row button, which is invalid HTML).
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "history-delete"; del.textContent = "×";
+      del.setAttribute("aria-label", `Delete chat: ${c.title || "New chat"}`);
+      del.addEventListener("click", () => deleteChat(c));
+      li.className = "history-row";
+      li.append(b, del);
+      ul.appendChild(li);
+    }
+  } catch { /* sidebar is a convenience: leave it as is if the server can't list chats */ }
+}
+
+// Deletes one stored chat after confirming. If it is the one on screen, reset to a new chat.
+async function deleteChat(c) {
+  if (streaming) return;
+  if (!confirm(`Delete "${c.title || "this chat"}"? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(c.id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) { alert(`Could not delete: ${err.message}`); return; }
+  if (c.id === conversationId) $("new-chat").click(); // also refreshes the sidebar
+  else loadHistory();
+}
+
+// Reload a past conversation into the view and make it the active one, so new messages
+// continue it. Sources/trace aren't stored in memory, so only the text comes back.
+async function openChat(id, force = false) {
+  if (streaming || (id === conversationId && !force)) return;
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const msgs = await res.json();
+    if (!msgs.length) return; // nothing stored yet (e.g. a brand-new chat): keep the welcome screen
+    conversationId = id;
+    try { localStorage.setItem(KEY, id); } catch {}
+    list.replaceChildren();
+    for (const m of msgs) {
+      const node = el("div", `msg ${m.role === "user" ? "user" : "bot"}`);
+      if (m.role === "user") node.textContent = m.content; else node.innerHTML = markdown(m.content);
+    }
+    scroll(true);
+    loadHistory();
+  } catch (err) { showError(`Could not open that chat: ${err.message}`); }
 }
 
 function showError(msg) {
@@ -210,8 +286,34 @@ $("new-chat").addEventListener("click", () => {
   if (streaming) return; // avoid mixing a running answer into the new conversation
   conversationId = crypto.randomUUID();
   try { localStorage.setItem(KEY, conversationId); } catch {}
-  list.innerHTML = "";
+  list.innerHTML = welcomeMarkup;
+  bindSuggestions();
   input.focus();
+  loadHistory();
 });
 
+// Wipes the server-side memory (every past conversation), then starts fresh. Destructive and
+// irreversible, so it asks first; the DELETE only fires after the user confirms.
+$("clear-all").addEventListener("click", async () => {
+  if (streaming) return;
+  if (!confirm("Delete ALL conversation history, including past days MiniMe could recall? This cannot be undone.")) return;
+  try {
+    const res = await fetch("/api/memory", { method: "DELETE" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    alert(`Could not clear history: ${err.message}`);
+    return; // keep the current chat on screen if the server did not clear
+  }
+  $("new-chat").click();
+});
+
+function bindSuggestions() {
+  list.querySelectorAll(".suggestions button").forEach((button) => {
+    button.addEventListener("click", () => send(button.textContent));
+  });
+}
+
+bindSuggestions();
 input.focus();
+loadHistory();
+openChat(conversationId, true); // after a page reload, show the chat the user was in

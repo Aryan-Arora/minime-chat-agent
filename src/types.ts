@@ -55,6 +55,10 @@ export interface MemoryStore {
   /** Messages whose createdAt falls in [fromIso, toIso). */
   between(fromIso: string, toIso: string): Promise<Message[]>;
   recent(limit: number): Promise<Message[]>;
+  /** Permanently delete all stored history. Optional so stores can adopt it one by one. */
+  clear?(): Promise<void>;
+  /** Permanently delete one conversation's messages. Optional like clear(). */
+  deleteConversation?(conversationId: string): Promise<void>;
 }
 
 export type NoteVolatility = "stable" | "volatile";

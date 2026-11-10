@@ -9,18 +9,59 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="top">
-    <h1>MiniMe</h1>
-    <button id="new-chat" type="button">New chat</button>
-  </header>
+  <div class="app-shell">
+    <aside class="brand-panel">
+      <a class="brand" href="/" aria-label="MiniMe home"><span class="brand-mark">M</span><span>MiniMe</span></a>
+      <div class="brand-copy">
+        <p class="eyebrow">Search, with a memory</p>
+        <h1>Answers that know where you left off.</h1>
+        <p>MiniMe remembers the useful parts, checks what changed, and shows its work.</p>
+      </div>
+      <nav class="history" aria-label="Your conversations">
+        <p class="eyebrow">Your chats</p>
+        <ul id="history"><li class="history-empty">No chats yet</li></ul>
+      </nav>
+      <div class="memory-note"><span></span> Dated memory · Fresh sources</div>
+    </aside>
 
-  <!-- aria-live so screen readers hear new answers as they stream in -->
-  <main id="messages" aria-live="polite"></main>
+    <section class="chat-panel">
+      <header class="top">
+        <div class="mobile-brand"><span class="brand-mark">M</span><strong>MiniMe</strong></div>
+        <div class="chat-title"><span class="online-dot"></span> Web-aware assistant</div>
+        <div class="top-actions">
+          <button id="clear-all" class="quiet-button danger" type="button" aria-label="Delete all conversation history">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg> Clear all
+          </button>
+          <button id="new-chat" class="quiet-button" type="button" aria-label="Start a new chat">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v14M3 10h14"/></svg> New chat
+          </button>
+        </div>
+      </header>
 
-  <form id="composer" autocomplete="off">
-    <textarea id="input" rows="1" placeholder="Ask anything (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea>
-    <button id="send" type="submit">Send</button>
-  </form>
+      <main id="messages" aria-live="polite">
+        <section id="welcome" class="welcome">
+          <p class="eyebrow">Ask the web. Keep the context.</p>
+          <h2>What are we figuring out?</h2>
+          <p>I can research something new, recall a dated conversation, or re-check an old answer.</p>
+          <div class="suggestions" aria-label="Example questions">
+            <button type="button">What changed in AI this week?</button>
+            <button type="button">What did I ask last Tuesday?</button>
+            <button type="button">Re-check the prices we compared</button>
+          </div>
+        </section>
+      </main>
+
+      <div class="composer-wrap">
+        <form id="composer" autocomplete="off">
+          <textarea id="input" rows="1" placeholder="Ask MiniMe anything…" aria-label="Message"></textarea>
+          <button id="send" type="submit" aria-label="Send message">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 10 5-5 5 5M10 5v10"/></svg>
+          </button>
+        </form>
+        <p>Enter to send · Shift + Enter for a new line</p>
+      </div>
+    </section>
+  </div>
 
   <!-- type=module: scoped, strict, deferred. No bundler needed. -->
   <script type="module" src="app.js"></script>

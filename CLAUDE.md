@@ -42,6 +42,7 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-10: GPT hardened the memory layer (atomic serialized JSON fallback, validated note extraction, bounded/date-only FTS retrieval, idempotent JSON-to-SQLite import) and redesigned `web/` with a responsive editorial layout, starter prompts, compact provenance, and support for the loop's `memory` SSE event. No agent/server signatures changed.
 - 2026-11-10: GPT improved the no-build `web/` UI with persistent streaming activity, source chips, a memory-context disclosure driven by existing `status` events, and tighter phone-width layout; the SSE contract is unchanged.
 - 2026-11-10: GPT added additive memory interfaces in `src/types.ts` (`MemoryNote`, snapshots, and `NoteMemoryStore`) without changing existing signatures; implemented a Node SQLite store with date/conversation indexes, FTS5 note retrieval, extraction prompt schema, and volatile-claim re-check ledger. JSON remains the server fallback pending Claude's wiring.
 - 2026-11-10: Wrote memory design (notes, re-check ledger, SQLite+FTS, caching). Handing UI + memory layer to GPT; I review.
