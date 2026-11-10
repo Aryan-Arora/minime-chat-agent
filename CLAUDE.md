@@ -16,6 +16,19 @@ Chat agent whose ONLY tool is web search, as good as the best web-search chatbot
 ## Architecture
 1 loop, 2 models (fast router/rewriter, main writer), 1 tool (`web_search`), 1 dated memory. Flagship only for hard questions. Shared interfaces in `src/types.ts` (`Message`, `SearchResult`, `ModelAdapter`) come first.
 
+## Memory design (target; the company is about memory and context management)
+Today: flat JSON file (`src/memory/store.ts`); the loop pastes a whole day's raw chat into the prompt. Slow and costly as history grows. Target, in build order:
+1. **Notes, not transcripts.** After each answer, a background fast-model call writes a small dated note: topic, claim, sources, search query, volatility (pricing = volatile, a capital = stable). Retrieval injects a few short notes instead of raw chat.
+2. **Re-check ledger.** For volatile claims store the query plus a snapshot of key values (e.g. prices). "What changed since last Tuesday?" = rerun the stored query, diff against the snapshot, let the model explain the diff. Structured and cheap, not recalled from memory.
+3. **SQLite store** (`better-sqlite3` or `node:sqlite`) with indexes on date and conversation, plus FTS5 full-text search over notes. Replaces the JSON file behind the same `MemoryStore` interface. Embeddings only if keyword search measurably misses.
+4. **Layered retrieval, cheapest first:** date resolver (plain code, free) -> time filter -> FTS over notes -> optional embeddings. Router skips memory when the question has no time/past cue; memory lookup runs in parallel with the router.
+5. **Cacheable prompts.** Stable prefix first (system prompt, short profile) so provider prompt caching applies; rolling summary of old turns; fixed token budget per prompt section.
+6. **Measure it.** Add prompt tokens and cost per question to `bench/`, plus memory-specific questions, and report real numbers in DESIGN.md.
+Constraint: the brief allows ONE tool (web search). Memory (including any future internal-docs ingestion) must stay memory the loop reads automatically, never a second tool.
+
+## Ownership right now
+Aryan is sending the chat UI (`web/`) and the memory layer (`src/memory/`) to GPT. I (Claude) keep the agent loop, prompts, model adapters and server, and review GPT's work. GPT must code against `src/types.ts` (`MemoryStore`, `Message`) and not change signatures without a note in the status log.
+
 ## Layout
 src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 
@@ -29,6 +42,7 @@ src/{types.ts, agent/, models/, tools/search.ts, memory/, server/}, web/, bench/
 - [ ] Chat UI: minimal page vs framework
 
 ## Status log (newest first)
+- 2026-11-10: Wrote memory design (notes, re-check ledger, SQLite+FTS, caching). Handing UI + memory layer to GPT; I review.
 - 2026-11-10: Anthropic adapter (fetch, streaming) in src/models; auto-used when ANTHROPIC_API_KEY set (defaults haiku-5-5 fast, sonnet-5-5 main). Untested against the live API: no key yet.
 - 2026-11-10: Added memory store (JSON file), agent loop, SSE server (port 3040), stub models, bench runner. All run keyless in stub mode; UI verified in browser. Next: real model adapters + keys, benchmark real models.
 - 2026-11-10: Created this file; scaffolding repo and shared types.
