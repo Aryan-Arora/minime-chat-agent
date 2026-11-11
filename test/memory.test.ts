@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { runAgent, waitForMemoryTasks, type AgentEvent } from "../src/agent/loop.js";
 import { diffSnapshots } from "../src/memory/ledger.js";
 import { parseNoteExtraction } from "../src/memory/notes.js";
+import { buildProfilePrompt, DEFAULT_PROFILE } from "../src/memory/preferences.js";
 import { createSqliteMemory } from "../src/memory/sqlite.js";
 import type { CompletionRequest, ModelAdapter, SearchTool } from "../src/types.js";
 
@@ -84,5 +85,16 @@ test("SQLite conversation deletion removes transcript, notes and ledger", async 
   assert.equal((await memory.recent(10)).length, 0);
   assert.equal((await memory.retrieve("hello")).length, 0);
   assert.equal(await memory.latestRecheck("n"), null);
+  memory.close();
+});
+
+test("SQLite stores an inspectable user profile separately from conversations", async () => {
+  const memory = createSqliteMemory(":memory:");
+  const profile = { ...DEFAULT_PROFILE, answerLength: "concise" as const, updatedAt: "2026-11-11T00:00:00Z" };
+  await memory.saveProfile(profile);
+  assert.equal((await memory.getProfile())?.answerLength, "concise");
+  assert.match(buildProfilePrompt(profile), /Length: concise/);
+  await memory.clearProfile();
+  assert.equal(await memory.getProfile(), null);
   memory.close();
 });

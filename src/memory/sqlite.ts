@@ -7,6 +7,7 @@ import type {
   Message,
   NoteMemoryStore,
   RecheckEntry,
+  UserProfile,
 } from "../types.js";
 
 type MessageRow = { id: string; role: Message["role"]; content: string; created_at: string; conversation_id: string };
@@ -17,6 +18,7 @@ type NoteRow = {
 type RecheckRow = {
   id: string; note_id: string; conversation_id: string; created_at: string; query: string; snapshot: string;
 };
+type ProfileRow = { profile_json: string };
 
 function message(row: MessageRow): Message {
   return { id: row.id, role: row.role, content: row.content, createdAt: row.created_at, conversationId: row.conversation_id };
@@ -90,6 +92,9 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     CREATE TABLE IF NOT EXISTS metadata (
       key TEXT PRIMARY KEY, value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      id TEXT PRIMARY KEY, profile_json TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
   `);
 
   return {
@@ -142,6 +147,18 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
       const row = db.prepare(`SELECT * FROM rechecks WHERE note_id = ? ORDER BY created_at DESC LIMIT 1`)
         .get(noteId) as unknown as RecheckRow | undefined;
       return row ? recheck(row) : null;
+    },
+    async getProfile(id = "default") {
+      const row = db.prepare(`SELECT profile_json FROM user_profiles WHERE id = ?`).get(id) as ProfileRow | undefined;
+      return row ? JSON.parse(row.profile_json) as UserProfile : null;
+    },
+    async saveProfile(profile) {
+      db.prepare(`INSERT INTO user_profiles(id, profile_json, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET profile_json=excluded.profile_json, updated_at=excluded.updated_at`)
+        .run(profile.id, JSON.stringify(profile), profile.updatedAt);
+    },
+    async clearProfile(id = "default") {
+      db.prepare(`DELETE FROM user_profiles WHERE id = ?`).run(id);
     },
     async deleteConversation(conversationId) {
       // Delete derived memory with its transcript so it cannot affect later answers.

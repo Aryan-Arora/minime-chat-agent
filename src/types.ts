@@ -100,11 +100,42 @@ export interface SnapshotChange {
   after?: SnapshotValue;
 }
 
+export type AnswerLength = "concise" | "balanced" | "detailed";
+export type AnswerTone = "direct" | "warm" | "formal";
+export type AnswerStructure = "prose" | "mixed" | "bullets";
+
+/** A preference is separate from factual memory and always remains inspectable. */
+export interface PreferenceSignal {
+  key: string;
+  value: string;
+  confidence: number;
+  evidenceCount: number;
+  source: "explicit" | "observed";
+  lastObservedAt: string;
+}
+
+export interface UserProfile {
+  id: string;
+  answerLength: AnswerLength;
+  tone: AnswerTone;
+  structure: AnswerStructure;
+  technicalDepth: "beginner" | "intermediate" | "expert";
+  leadWithRecommendation: boolean;
+  showSources: "always" | "when_searched" | "collapsed";
+  compareInTables: boolean;
+  adaptiveLearning: boolean;
+  signals: PreferenceSignal[];
+  updatedAt: string;
+}
+
 /** SQLite adds compact retrieval without changing the existing MemoryStore contract. */
 export interface NoteMemoryStore extends MemoryStore {
   saveNote(note: MemoryNote): Promise<void>;
   retrieve(query: string, dateRange?: MemoryDateRange, limit?: number): Promise<MemoryNote[]>;
   saveRecheck(entry: RecheckEntry): Promise<void>;
   latestRecheck(noteId: string): Promise<RecheckEntry | null>;
+  getProfile(id?: string): Promise<UserProfile | null>;
+  saveProfile(profile: UserProfile): Promise<void>;
+  clearProfile(id?: string): Promise<void>;
   close(): void;
 }

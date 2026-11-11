@@ -165,6 +165,40 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-vis
 #send:disabled { opacity: .42; cursor: default; transform: none; }
 .composer-wrap > p { display: flex; width: min(790px, 100%); margin: 6px auto 0; justify-content: center; gap: 14px; color: var(--faint); font-size: .61rem; }
 
+/* Personalization is a parallel task, so it arrives as an anchored side sheet. */
+.personalize-scrim { position: fixed; z-index: 40; inset: 0; visibility: hidden; padding: 0; opacity: 0; border: 0; background: rgba(7,8,14,.38); backdrop-filter: blur(5px); cursor: default; transition: opacity 180ms ease, visibility 180ms; }
+.personalize-panel { position: fixed; z-index: 41; top: 12px; right: 12px; bottom: 12px; display: flex; width: min(470px, calc(100vw - 24px)); padding: 28px; overflow-y: auto; flex-direction: column; visibility: hidden; opacity: 0; border: 1px solid color-mix(in srgb, var(--line-strong) 80%, white); border-radius: 24px; background: color-mix(in srgb, var(--surface) 91%, transparent); backdrop-filter: blur(30px) saturate(170%); box-shadow: 0 34px 100px rgba(10,11,23,.27), inset 0 1px 0 rgba(255,255,255,.7); transform: translateX(24px) scale(.985); transform-origin: top right; transition: transform 260ms cubic-bezier(.2,.8,.2,1), opacity 180ms ease, visibility 260ms; }
+.personalize-open .personalize-scrim { visibility: visible; opacity: 1; }
+.personalize-open .personalize-panel { visibility: visible; opacity: 1; transform: translateX(0) scale(1); }
+.personalize-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.panel-kicker { margin: 0 0 8px; color: var(--accent-strong); font-size: .65rem; font-weight: 760; letter-spacing: .13em; text-transform: uppercase; }
+.personalize-head h2 { max-width: 11em; margin: 0; font-size: 1.75rem; font-weight: 620; line-height: 1.08; letter-spacing: -.045em; }
+.panel-intro { margin: 15px 0 25px; color: var(--muted); font-size: .8rem; line-height: 1.55; }
+#preference-form { display: grid; gap: 24px; }
+#preference-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+#preference-form legend { margin-bottom: 9px; color: var(--text); font-size: .72rem; font-weight: 700; }
+.choice-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.choice-row label { min-width: 0; cursor: pointer; }
+.choice-row input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-row label > span { display: grid; min-height: 72px; padding: 11px; align-content: center; gap: 3px; color: var(--text); border: 1px solid var(--line); border-radius: 13px; background: var(--surface-soft); font-size: .72rem; font-weight: 680; transition: transform 120ms ease, border-color 150ms ease, background 150ms ease, box-shadow 150ms ease; }
+.choice-row label:active > span { transform: scale(.97); }
+.choice-row label > span small { color: var(--muted); font-size: .6rem; font-weight: 450; line-height: 1.3; }
+.choice-row input:checked + span { color: var(--accent-strong); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent); }
+.choice-row input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--accent) 30%, transparent); outline-offset: 2px; }
+.choice-row.compact label > span { min-height: 42px; padding: 8px 10px; place-items: center; }
+.preference-toggles { display: grid; border-top: 1px solid var(--line); }
+.preference-toggles > label { display: flex; min-height: 67px; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.preference-toggles span { display: grid; gap: 2px; }
+.preference-toggles strong { font-size: .72rem; }
+.preference-toggles small { color: var(--muted); font-size: .62rem; line-height: 1.35; }
+.preference-toggles input { position: relative; width: 38px; height: 22px; margin: 0; flex: 0 0 auto; appearance: none; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-soft); cursor: pointer; transition: background 160ms ease, border-color 160ms ease; }
+.preference-toggles input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 4px rgba(0,0,0,.20); transition: transform 180ms cubic-bezier(.2,.8,.2,1); }
+.preference-toggles input:checked { border-color: var(--accent); background: var(--accent); }
+.preference-toggles input:checked::after { transform: translateX(16px); }
+.personalize-foot { display: flex; margin-top: auto; padding-top: 24px; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .65rem; }
+.personalize-foot button { padding: 7px 9px; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; font-size: .65rem; }
+.personalize-foot button:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, transparent); }
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 0%, 60%, 100% { opacity: .28; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 @keyframes rise { from { opacity: 0; transform: translateY(7px); } }
@@ -196,6 +230,8 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-vis
   .provenance-links { grid-template-columns: 1fr; }
   .composer-wrap { padding: 8px 9px calc(9px + env(safe-area-inset-bottom)); }
   .composer-wrap > p { display: none; }
+  .personalize-panel { top: auto; right: 0; bottom: 0; left: 0; width: 100%; max-height: min(90vh, 760px); padding: 22px 18px calc(18px + env(safe-area-inset-bottom)); border-radius: 24px 24px 0 0; transform: translateY(32px) scale(.99); transform-origin: bottom center; }
+  .personalize-open .personalize-panel { transform: translateY(0) scale(1); }
 }
 
 @media (max-width: 480px) {
@@ -208,6 +244,7 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-vis
   .suggestions strong { font-size: .75rem; }
   .msg.bot { font-size: .94rem; }
   #composer { border-radius: 16px; }
+  .choice-row label > span { min-height: 62px; padding: 9px; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -231,8 +268,8 @@ button:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-vis
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .top, #composer, .sidebar-scrim { backdrop-filter: none; }
-  .top, #composer { background: var(--surface); }
+  .top, #composer, .sidebar-scrim, .personalize-panel, .personalize-scrim { backdrop-filter: none; }
+  .top, #composer, .personalize-panel { background: var(--surface); }
 }
 @media (prefers-contrast: more) {
   :root { --line: rgba(0,0,0,.28); --line-strong: rgba(0,0,0,.48); }

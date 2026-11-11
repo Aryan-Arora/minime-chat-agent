@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
   <title>MiniMe</title>
-  <link rel="stylesheet" href="style.css?v=20261111-4" />
+  <link rel="stylesheet" href="style.css?v=20261111-5" />
 </head>
 <body>
   <div class="ambient" aria-hidden="true"><span></span><span></span></div>
@@ -43,6 +43,9 @@
           <div class="chat-title"><span class="online-dot"></span><div><strong>Research assistant</strong><small>Web-aware · Memory on</small></div></div>
         </div>
         <div class="top-actions">
+          <button id="personalize-open" class="quiet-button personalize-button" type="button" aria-haspopup="dialog" aria-controls="personalize-panel">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8 11.4 7l4.2 1.4-4.2 1.4-1.4 4.2-1.4-4.2-4.2-1.4L8.6 7 10 2.8ZM15.5 13l.7 2.1 2.1.7-2.1.7-.7 2.1-.7-2.1-2.1-.7 2.1-.7.7-2.1Z"/></svg> Personalize
+          </button>
           <button id="clear-chat" class="quiet-button danger" type="button" aria-label="Delete the current conversation">
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10"/></svg> Clear chat
           </button>
@@ -77,7 +80,41 @@
     </section>
   </div>
 
+  <button id="personalize-scrim" class="personalize-scrim" type="button" aria-label="Close personalization"></button>
+  <aside id="personalize-panel" class="personalize-panel" role="dialog" aria-modal="true" aria-labelledby="personalize-title" aria-hidden="true">
+    <header class="personalize-head">
+      <div><p class="panel-kicker">Your MiniMe</p><h2 id="personalize-title">Make every answer feel yours.</h2></div>
+      <button id="personalize-close" class="icon-button" type="button" aria-label="Close personalization">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+      </button>
+    </header>
+    <p class="panel-intro">Choose how MiniMe communicates. These preferences change presentation—not the evidence behind an answer.</p>
+    <form id="preference-form">
+      <fieldset><legend>Answer depth</legend><div class="choice-row">
+        <label><input type="radio" name="answerLength" value="concise"><span>Brief<small>Just the essentials</small></span></label>
+        <label><input type="radio" name="answerLength" value="balanced"><span>Balanced<small>Useful context</small></span></label>
+        <label><input type="radio" name="answerLength" value="detailed"><span>Deep<small>Full reasoning</small></span></label>
+      </div></fieldset>
+      <fieldset><legend>Tone</legend><div class="choice-row compact">
+        <label><input type="radio" name="tone" value="direct"><span>Direct</span></label>
+        <label><input type="radio" name="tone" value="warm"><span>Warm</span></label>
+        <label><input type="radio" name="tone" value="formal"><span>Formal</span></label>
+      </div></fieldset>
+      <fieldset><legend>Structure</legend><div class="choice-row compact">
+        <label><input type="radio" name="structure" value="prose"><span>Prose</span></label>
+        <label><input type="radio" name="structure" value="mixed"><span>Mixed</span></label>
+        <label><input type="radio" name="structure" value="bullets"><span>Bullets</span></label>
+      </div></fieldset>
+      <div class="preference-toggles">
+        <label><span><strong>Lead with the recommendation</strong><small>Start with the decision, then explain it.</small></span><input type="checkbox" name="leadWithRecommendation" role="switch"></label>
+        <label><span><strong>Prefer comparison tables</strong><small>Use tables when several options are compared.</small></span><input type="checkbox" name="compareInTables" role="switch"></label>
+        <label><span><strong>Learn from my corrections</strong><small>Only repeated patterns become suggested preferences.</small></span><input type="checkbox" name="adaptiveLearning" role="switch"></label>
+      </div>
+    </form>
+    <footer class="personalize-foot"><span id="preference-status">Saved on this device</span><button id="preferences-reset" type="button">Reset defaults</button></footer>
+  </aside>
+
   <!-- type=module: scoped, strict, deferred. No bundler needed. -->
-  <script type="module" src="app.js?v=20261111-4"></script>
+  <script type="module" src="app.js?v=20261111-5"></script>
 </body>
 </html>

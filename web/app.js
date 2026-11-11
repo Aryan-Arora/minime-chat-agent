@@ -29,6 +29,55 @@ $("sidebar-close").addEventListener("click", () => setSidebar(false));
 $("sidebar-scrim").addEventListener("click", () => setSidebar(false));
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") setSidebar(false); });
 
+// ---------- inspectable response preferences ----------
+// Local persistence makes the UI useful before Claude wires the profile into the agent prompt.
+const PROFILE_KEY = "minime.userProfile.v1";
+const profileDefaults = {
+  answerLength: "balanced", tone: "direct", structure: "mixed",
+  leadWithRecommendation: true, compareInTables: true, adaptiveLearning: false,
+};
+const profileForm = $("preference-form");
+const profilePanel = $("personalize-panel");
+function loadProfile() {
+  try { return { ...profileDefaults, ...JSON.parse(localStorage.getItem(PROFILE_KEY) || "{}") }; }
+  catch { return { ...profileDefaults }; }
+}
+function renderProfile(profile) {
+  for (const [key, value] of Object.entries(profile)) {
+    const control = profileForm.elements.namedItem(key);
+    if (control instanceof RadioNodeList) control.value = String(value);
+    else if (control instanceof HTMLInputElement) control.checked = Boolean(value);
+  }
+  $("preference-status").textContent = `${profile.answerLength} · ${profile.tone} · ${profile.structure}`;
+}
+function setProfilePanel(open) {
+  document.body.classList.toggle("personalize-open", open);
+  profilePanel.setAttribute("aria-hidden", String(!open));
+  if (open) { renderProfile(loadProfile()); $("personalize-close").focus(); }
+  else $("personalize-open").focus();
+}
+$("personalize-open").addEventListener("click", () => setProfilePanel(true));
+$("personalize-close").addEventListener("click", () => setProfilePanel(false));
+$("personalize-scrim").addEventListener("click", () => setProfilePanel(false));
+profileForm.addEventListener("change", () => {
+  const data = new FormData(profileForm);
+  const profile = {
+    answerLength: data.get("answerLength"), tone: data.get("tone"), structure: data.get("structure"),
+    leadWithRecommendation: data.has("leadWithRecommendation"), compareInTables: data.has("compareInTables"),
+    adaptiveLearning: data.has("adaptiveLearning"), updatedAt: new Date().toISOString(),
+  };
+  try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); } catch {}
+  renderProfile(profile);
+});
+$("preferences-reset").addEventListener("click", () => {
+  try { localStorage.removeItem(PROFILE_KEY); } catch {}
+  renderProfile(profileDefaults);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.body.classList.contains("personalize-open")) setProfilePanel(false);
+});
+renderProfile(loadProfile());
+
 // ---------- tiny safe markdown ----------
 // Safety strategy: escape ALL html first, then add only tags we generate ourselves.
 // Since "<" is already "&lt;", model output can never inject markup.
