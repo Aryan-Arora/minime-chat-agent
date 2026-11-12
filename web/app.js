@@ -169,6 +169,7 @@ async function send(message) {
   scroll(true);
 
   let memoryNotes = [], memoryDescription = "", sourceList = [];
+  let detailedAnswer = null;
   const renderProvenance = () => {
     provenance.body.replaceChildren();
     const parts = [];
@@ -252,8 +253,12 @@ async function send(message) {
       } else if (ev.type === "preview") {
         hasPreview = true;
         bot.classList.add("preview");
-        bot.innerHTML = `<span class="preview-label">Quick take</span>${markdown(ev.text)}`;
-        status.textContent = "Preparing the detailed answer…";
+        bot.innerHTML = `<section class="preview-summary">
+          <div class="preview-meta"><span><i></i>At a glance</span><small>Expanding this answer</small></div>
+          <div class="preview-copy">${markdown(ev.text)}</div>
+          <div class="preview-progress" aria-hidden="true"><i></i></div>
+        </section>`;
+        status.textContent = "Writing the full answer…";
       } else if (ev.type === "memory") {
         memoryDescription = ev.text || "Past conversation context";
         memoryNotes = Array.isArray(ev.notes) ? ev.notes : [];
@@ -261,11 +266,23 @@ async function send(message) {
       } else if (ev.type === "token") {
         if (!gotToken) {
           status.textContent = "Writing answer…";
-          if (hasPreview) { bot.classList.remove("preview"); text = ""; }
+          if (hasPreview) {
+            bot.classList.remove("preview");
+            bot.classList.add("with-preview");
+            const meta = bot.querySelector(".preview-meta small");
+            if (meta) meta.textContent = "Full answer ready below";
+            bot.querySelector(".preview-progress")?.remove();
+            detailedAnswer = document.createElement("div");
+            detailedAnswer.className = "detailed-answer";
+            bot.appendChild(detailedAnswer);
+            text = "";
+          }
         }
         gotToken = true;
         text += ev.text;
-        bot.innerHTML = markdown(text); // re-render whole text: simple, and fast enough for chat-sized answers
+        // The early orientation stays visible while the richer answer grows below it.
+        if (detailedAnswer) detailedAnswer.innerHTML = markdown(text);
+        else bot.innerHTML = markdown(text); // re-render whole text: simple, and fast enough for chat-sized answers
       } else if (ev.type === "sources") {
         sourceList = Array.isArray(ev.sources) ? ev.sources : [];
         renderProvenance();
