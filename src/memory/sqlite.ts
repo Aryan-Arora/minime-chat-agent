@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { memoryFingerprint } from "./ingestion.js";
+import { memoryFingerprint, tokenSimilarity } from "./ingestion.js";
 import type {
   CandidateResolution,
   MemoryDateRange,
@@ -82,15 +82,22 @@ function insertStructured(db: DatabaseSync, value: MemoryCandidate, evidence: st
 // Quoted word tokens avoid exposing callers to FTS5 operators and malformed MATCH input.
 function ftsQuery(input: string): string {
   const stop = new Set([
-    "a", "an", "and", "about", "asked", "before", "changed", "did", "do", "from", "has", "have", "i", "in", "is", "it",
-    "last", "me", "my", "now", "on", "re", "remember", "said", "since", "still", "the", "this", "time", "to", "today", "was",
+    "a", "an", "and", "about", "asked", "before", "can", "changed", "could", "did", "do", "for", "from", "has", "have", "how", "i", "in", "is", "it",
+    "last", "me", "my", "now", "on", "please", "re", "remember", "said", "should", "since", "still", "tell", "the", "this", "time", "to", "today", "was",
     "we", "what", "when", "which", "you", "your", "yesterday", "january", "february", "march", "april", "may", "june", "july",
-    "august", "september", "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "august", "september", "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "would",
   ]);
   return (input.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])
     .filter((word) => !stop.has(word) && !/^\d{1,4}$/.test(word))
     .map((word) => `"${word.replaceAll('"', '""')}"`)
     .join(" OR ");
+}
+
+function categoryCue(input: string): MemoryCandidate["category"] | null {
+  if (/\b(prefer|preference|response style|answer style|format (?:answers|responses))\b/i.test(input)) return "preference";
+  if (/\b(decide|decided|decision|chose|chosen|selected|settled on)\b/i.test(input)) return "decision";
+  if (/\b(plan|planned|next step|roadmap)\b/i.test(input)) return "plan";
+  return null;
 }
 
 export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): NoteMemoryStore {
@@ -173,6 +180,26 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
       fingerprint TEXT PRIMARY KEY, scope TEXT NOT NULL, created_at TEXT NOT NULL
     );
   `);
+  const ftsVersion = "notes-fts-porter-v2";
+  if (!db.prepare(`SELECT 1 FROM metadata WHERE key=?`).get(ftsVersion)) {
+    db.exec(`
+      DROP TRIGGER IF EXISTS notes_ai; DROP TRIGGER IF EXISTS notes_ad; DROP TRIGGER IF EXISTS notes_au;
+      DROP TABLE IF EXISTS notes_fts;
+      CREATE VIRTUAL TABLE notes_fts USING fts5(topic, claim, content='notes', content_rowid='rowid', tokenize='porter unicode61');
+      CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+        INSERT INTO notes_fts(rowid, topic, claim) VALUES (new.rowid, new.topic, new.claim);
+      END;
+      CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, topic, claim) VALUES ('delete', old.rowid, old.topic, old.claim);
+      END;
+      CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
+        INSERT INTO notes_fts(notes_fts, rowid, topic, claim) VALUES ('delete', old.rowid, old.topic, old.claim);
+        INSERT INTO notes_fts(rowid, topic, claim) VALUES (new.rowid, new.topic, new.claim);
+      END;
+      INSERT INTO notes_fts(rowid, topic, claim) SELECT rowid, topic, claim FROM notes;
+    `);
+    db.prepare(`INSERT INTO metadata(key, value) VALUES (?, ?)`).run(ftsVersion, new Date().toISOString());
+  }
   // A previous process may have stopped mid-extraction. Its durable jobs are safe to retry.
   db.exec(`UPDATE memory_jobs SET status = 'pending', updated_at = datetime('now') WHERE status = 'processing'`);
   // Notes from earlier versions remain useful. Backfill them without another model call.
@@ -234,7 +261,17 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
         ? (dateRange ? [match, dateRange.from, dateRange.to, count] : [match, count])
         : (dateRange ? [dateRange.from, dateRange.to, count] : [count]);
       const rows = db.prepare(sql).all(...params) as unknown as NoteRow[];
-      return rows.map(note);
+      if (rows.length || !categoryCue(query)) return rows.map(note);
+      // A structured cue can recover a preference/decision even when wording has no overlap.
+      const category = categoryCue(query);
+      const categoryDate = dateRange ? `AND n.created_at >= ? AND n.created_at < ?` : "";
+      const categoryParams = dateRange
+        ? [category, dateRange.from, dateRange.to, count]
+        : [category, count];
+      const fallback = db.prepare(`SELECT n.* FROM structured_memories m JOIN notes n ON n.id=m.note_id
+        WHERE m.status='active' AND m.category=? ${categoryDate}
+        ORDER BY m.confidence DESC, m.created_at DESC LIMIT ?`).all(...categoryParams) as unknown as NoteRow[];
+      return fallback.map(note);
     },
     async saveRecheck(value) {
       db.prepare(`INSERT OR REPLACE INTO rechecks(id, note_id, conversation_id, created_at, query, snapshot)
@@ -329,6 +366,21 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
             .run(exact.id, candidate.id, candidate.createdAt);
           db.exec("COMMIT");
           return { action: "duplicate", memoryId: exact.id };
+        }
+        if (candidate.category === "research_finding") {
+          const nearby = db.prepare(`SELECT * FROM structured_memories
+            WHERE category='research_finding' AND predicate=? AND status='active'`)
+            .all(candidate.predicate) as unknown as StructuredRow[];
+          const duplicate = nearby.find((row) => tokenSimilarity(
+            `${candidate.subject} ${candidate.object}`, `${row.subject} ${row.object}`,
+          ) >= .82);
+          if (duplicate) {
+            insertCandidate(db, candidate, "duplicate", evidence);
+            db.prepare(`INSERT INTO memory_revisions(memory_id, candidate_id, action, created_at) VALUES (?, ?, 'near_duplicate', ?)`)
+              .run(duplicate.id, candidate.id, candidate.createdAt);
+            db.exec("COMMIT");
+            return { action: "duplicate", memoryId: duplicate.id };
+          }
         }
         const supersedable = candidate.category !== "research_finding";
         const prior = supersedable

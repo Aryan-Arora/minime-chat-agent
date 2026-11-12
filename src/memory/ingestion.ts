@@ -14,6 +14,9 @@ export function assessRelevance(source: MemoryIngestionSource): RelevanceDecisio
   const answer = source.assistant.content.trim();
   if (!answer || user.length < 3) return reject("empty exchange");
   if (/^(hi|hello|hey|thanks|thank you|ok(?:ay)?|cool|great)[!.\s]*$/i.test(user)) return reject("social acknowledgement");
+  if (/\b(cannot (?:access|see|recall)|can't (?:access|see|recall)|could not (?:access|find|recall|verify)|no (?:earlier |prior )?(?:chat|conversation|history)|search (?:failed|returned no))\b/i.test(answer)) {
+    return reject("assistant limitation or failed retrieval");
+  }
   if (/\b(i prefer|my preference|i like|i want (?:answers|responses)|always show)\b/i.test(user)) {
     return accept("preference", .98, "explicit user preference");
   }
@@ -55,6 +58,16 @@ export function memoryFingerprint(subject: string, predicate: string, object: st
     .map((value) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim())
     .join("|");
   return createHash("sha256").update(normalized).digest("hex");
+}
+
+/** Conservative token overlap: useful for duplicate candidates, never proof of equivalence. */
+export function tokenSimilarity(left: string, right: string): number {
+  const tokens = (value: string) => new Set(value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+  const a = tokens(left), b = tokens(right);
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const token of a) if (b.has(token)) shared += 1;
+  return shared / new Set([...a, ...b]).size;
 }
 
 function cryptoId(sourceId: string, noteId: string): string {
