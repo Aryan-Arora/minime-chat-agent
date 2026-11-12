@@ -60,6 +60,31 @@ const server = createServer(async (req, res) => {
       res.writeHead(204).end();
       return;
     }
+    // Inspect first, then explicitly confirm exact IDs. Forgetting never accepts a broad query.
+    if (req.method === "GET" && req.url?.startsWith("/api/memories")) {
+      const store = deps.memory as Partial<NoteMemoryStore>;
+      if (!store.activeMemories) { res.writeHead(501).end("structured memory unavailable"); return; }
+      const query = new URL(req.url, "http://localhost").searchParams.get("query") ?? "";
+      const memories = await store.activeMemories(query, 30);
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(memories.map(({ id, subject, predicate, object, category, createdAt }) =>
+        ({ id, subject, predicate, object, category, createdAt }))));
+      return;
+    }
+    if (req.method === "DELETE" && req.url === "/api/memories") {
+      const store = deps.memory as Partial<NoteMemoryStore>;
+      if (!store.forgetMemories) { res.writeHead(501).end("structured memory unavailable"); return; }
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const value = JSON.parse(body) as { ids?: unknown; confirm?: unknown };
+      if (value.confirm !== true || !Array.isArray(value.ids) || !value.ids.every((id) => typeof id === "string")) {
+        res.writeHead(400).end("exact memory ids and confirm=true are required"); return;
+      }
+      const forgotten = await store.forgetMemories(value.ids);
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify({ forgotten }));
+      return;
+    }
     // Sidebar: list every conversation (newest first), or fetch one conversation's messages.
     // Derived from the message log, so it works with any MemoryStore.
     if (req.method === "GET" && req.url?.startsWith("/api/conversations")) {

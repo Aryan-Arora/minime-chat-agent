@@ -128,6 +128,54 @@ export interface UserProfile {
   updatedAt: string;
 }
 
+export type MemoryCategory = "preference" | "decision" | "plan" | "personal_fact" | "research_finding";
+export type CandidateStatus = "proposed" | "active" | "duplicate" | "superseded" | "rejected" | "forgotten";
+
+/** The durable input to background memory processing. */
+export interface MemoryIngestionSource {
+  id: string;
+  conversationId: string;
+  user: Message;
+  assistant: Message;
+  query?: string;
+  sources: string[];
+  createdAt: string;
+}
+
+export interface MemoryIngestionJob {
+  id: string;
+  source: MemoryIngestionSource;
+  attempts: number;
+}
+
+/** A proposed atomic memory. Resolution decides whether it becomes authoritative. */
+export interface MemoryCandidate {
+  id: string;
+  sourceId: string;
+  noteId: string;
+  conversationId: string;
+  subject: string;
+  predicate: string;
+  object: string;
+  category: MemoryCategory;
+  confidence: number;
+  volatility: NoteVolatility;
+  evidence: string[];
+  fingerprint: string;
+  createdAt: string;
+}
+
+export interface StructuredMemory extends MemoryCandidate {
+  status: Exclude<CandidateStatus, "proposed" | "duplicate" | "rejected">;
+  validFrom: string;
+  validTo?: string;
+}
+
+export interface CandidateResolution {
+  action: "inserted" | "duplicate" | "superseded" | "rejected";
+  memoryId?: string;
+}
+
 /** SQLite adds compact retrieval without changing the existing MemoryStore contract. */
 export interface NoteMemoryStore extends MemoryStore {
   saveNote(note: MemoryNote): Promise<void>;
@@ -137,5 +185,12 @@ export interface NoteMemoryStore extends MemoryStore {
   getProfile(id?: string): Promise<UserProfile | null>;
   saveProfile(profile: UserProfile): Promise<void>;
   clearProfile(id?: string): Promise<void>;
+  enqueueIngestion(source: MemoryIngestionSource): Promise<string>;
+  claimIngestion(): Promise<MemoryIngestionJob | null>;
+  completeIngestion(jobId: string): Promise<void>;
+  failIngestion(jobId: string, error: string): Promise<void>;
+  resolveCandidate(candidate: MemoryCandidate): Promise<CandidateResolution>;
+  activeMemories(query?: string, limit?: number): Promise<StructuredMemory[]>;
+  forgetMemories(ids: string[]): Promise<number>;
   close(): void;
 }

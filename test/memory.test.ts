@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { runAgent, waitForMemoryTasks, type AgentEvent } from "../src/agent/loop.js";
 import { diffSnapshots } from "../src/memory/ledger.js";
+import { assessRelevance, candidateFromNote } from "../src/memory/ingestion.js";
 import { parseNoteExtraction } from "../src/memory/notes.js";
 import { buildProfilePrompt, DEFAULT_PROFILE } from "../src/memory/preferences.js";
 import { createSqliteMemory } from "../src/memory/sqlite.js";
-import type { CompletionRequest, ModelAdapter, SearchTool } from "../src/types.js";
+import type { CompletionRequest, MemoryIngestionSource, MemoryNote, ModelAdapter, SearchTool } from "../src/types.js";
 
 test("note parsing rejects malformed output and snapshot diff stays structured", () => {
   const meta = { id: "n", conversationId: "c", createdAt: "2026-11-10T10:00:00Z" };
@@ -136,4 +140,69 @@ test("a new chat can immediately summarize the previous chat", async () => {
   assert.ok(events.some((event) => event.type === "memory"));
   await waitForMemoryTasks();
   memory.close();
+});
+
+test("durable ingestion gates noise, resolves candidates and prevents forgotten memory returning", async () => {
+  const memory = createSqliteMemory(":memory:");
+  const user = { id: "u", role: "user" as const, content: "I prefer concise answers", createdAt: "2026-11-13T10:00:00Z", conversationId: "c" };
+  const assistant = { id: "a", role: "assistant" as const, content: "I will keep future answers concise while preserving important evidence.", createdAt: "2026-11-13T10:00:01Z", conversationId: "c" };
+  const source: MemoryIngestionSource = {
+    id: "s1", conversationId: "c", user, assistant, sources: [], createdAt: assistant.createdAt,
+  };
+  const decision = assessRelevance(source);
+  assert.equal(decision.outcome, "accept");
+  assert.equal(decision.category, "preference");
+  assert.equal(assessRelevance({ ...source, user: { ...user, content: "Thanks!" } }).outcome, "reject");
+
+  await memory.enqueueIngestion(source);
+  const job = await memory.claimIngestion();
+  assert.equal(job?.source.id, "s1");
+  await memory.completeIngestion(job!.id);
+  assert.equal(await memory.claimIngestion(), null);
+
+  const note: MemoryNote = {
+    id: "n1", conversationId: "c", createdAt: assistant.createdAt,
+    topic: "Answer style", claim: "Aryan prefers concise answers", sources: [], volatility: "stable",
+  };
+  const first = candidateFromNote(source, note, decision);
+  assert.equal((await memory.resolveCandidate(first)).action, "inserted");
+  assert.equal((await memory.resolveCandidate({ ...first, id: "duplicate" })).action, "duplicate");
+
+  const changedNote = { ...note, id: "n2", claim: "Aryan prefers detailed answers", createdAt: "2026-11-13T11:00:00Z" };
+  const changed = candidateFromNote({ ...source, id: "s2" }, changedNote, decision);
+  assert.equal((await memory.resolveCandidate(changed)).action, "superseded");
+  assert.deepEqual((await memory.activeMemories()).map((item) => item.object), ["Aryan prefers detailed answers"]);
+
+  assert.equal(await memory.forgetMemories([changed.id]), 1);
+  assert.equal((await memory.activeMemories()).length, 0);
+  assert.equal((await memory.resolveCandidate({ ...changed, id: "recreated" })).action, "rejected");
+  memory.close();
+});
+
+test("an interrupted ingestion job is claimed again after restart", async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), "minime-memory-"));
+  const file = path.join(directory, "memory.sqlite");
+  const user = { id: "u", role: "user" as const, content: "Research durable queues", createdAt: "2026-11-13T10:00:00Z", conversationId: "c" };
+  const assistant = { id: "a", role: "assistant" as const, content: "A durable queue persists work before processing starts.", createdAt: "2026-11-13T10:00:01Z", conversationId: "c" };
+  const source: MemoryIngestionSource = { id: "restart-source", conversationId: "c", user, assistant, sources: [], createdAt: assistant.createdAt };
+  try {
+    const first = createSqliteMemory(file);
+    await first.enqueueIngestion(source);
+    await first.saveNote({
+      id: "old-note", conversationId: "c", createdAt: assistant.createdAt,
+      topic: "Durable queue", claim: "Jobs survive a process restart", sources: [], volatility: "stable",
+    });
+    assert.equal((await first.claimIngestion())?.attempts, 1);
+    first.close(); // simulate a process stopping while the job is marked processing
+
+    const restarted = createSqliteMemory(file);
+    const retried = await restarted.claimIngestion();
+    assert.equal(retried?.source.id, source.id);
+    assert.equal(retried?.attempts, 2);
+    assert.equal((await restarted.activeMemories("durable")).length, 1, "older notes should be backfilled");
+    await restarted.completeIngestion(retried!.id);
+    restarted.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

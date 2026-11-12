@@ -1,12 +1,18 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { memoryFingerprint } from "./ingestion.js";
 import type {
+  CandidateResolution,
   MemoryDateRange,
+  MemoryCandidate,
+  MemoryIngestionJob,
+  MemoryIngestionSource,
   MemoryNote,
   Message,
   NoteMemoryStore,
   RecheckEntry,
+  StructuredMemory,
   UserProfile,
 } from "../types.js";
 
@@ -19,6 +25,13 @@ type RecheckRow = {
   id: string; note_id: string; conversation_id: string; created_at: string; query: string; snapshot: string;
 };
 type ProfileRow = { profile_json: string };
+type JobRow = { id: string; source_json: string; attempts: number };
+type StructuredRow = {
+  id: string; source_id: string; note_id: string; conversation_id: string;
+  subject: string; predicate: string; object: string; category: MemoryCandidate["category"];
+  confidence: number; volatility: MemoryNote["volatility"]; evidence: string; fingerprint: string;
+  status: StructuredMemory["status"]; created_at: string; valid_from: string; valid_to: string | null;
+};
 
 function message(row: MessageRow): Message {
   return { id: row.id, role: row.role, content: row.content, createdAt: row.created_at, conversationId: row.conversation_id };
@@ -37,6 +50,33 @@ function recheck(row: RecheckRow): RecheckEntry {
     id: row.id, noteId: row.note_id, conversationId: row.conversation_id,
     createdAt: row.created_at, query: row.query, snapshot: JSON.parse(row.snapshot),
   };
+}
+
+function structured(row: StructuredRow): StructuredMemory {
+  return {
+    id: row.id, sourceId: row.source_id, noteId: row.note_id, conversationId: row.conversation_id,
+    subject: row.subject, predicate: row.predicate, object: row.object, category: row.category,
+    confidence: row.confidence, volatility: row.volatility, evidence: JSON.parse(row.evidence) as string[],
+    fingerprint: row.fingerprint, createdAt: row.created_at, status: row.status,
+    validFrom: row.valid_from, ...(row.valid_to ? { validTo: row.valid_to } : {}),
+  };
+}
+
+function insertCandidate(db: DatabaseSync, value: MemoryCandidate, status: string, evidence: string): void {
+  db.prepare(`INSERT OR IGNORE INTO memory_candidates(id, source_id, note_id, conversation_id, subject, predicate, object,
+    category, confidence, volatility, evidence, fingerprint, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(value.id, value.sourceId, value.noteId, value.conversationId, value.subject, value.predicate,
+      value.object, value.category, value.confidence, value.volatility, evidence, value.fingerprint, status, value.createdAt);
+}
+
+function insertStructured(db: DatabaseSync, value: MemoryCandidate, evidence: string): void {
+  db.prepare(`INSERT OR IGNORE INTO structured_memories(id, source_id, note_id, conversation_id, subject, predicate, object,
+    category, confidence, volatility, evidence, fingerprint, status, created_at, valid_from)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`)
+    .run(value.id, value.sourceId, value.noteId, value.conversationId, value.subject, value.predicate,
+      value.object, value.category, value.confidence, value.volatility, evidence, value.fingerprint,
+      value.createdAt, value.createdAt);
 }
 
 // Quoted word tokens avoid exposing callers to FTS5 operators and malformed MATCH input.
@@ -95,7 +135,65 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     CREATE TABLE IF NOT EXISTS user_profiles (
       id TEXT PRIMARY KEY, profile_json TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memory_sources (
+      id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, source_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'complete', 'failed')),
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS memory_sources_conversation ON memory_sources(conversation_id, created_at);
+    CREATE TABLE IF NOT EXISTS memory_jobs (
+      id TEXT PRIMARY KEY, source_id TEXT NOT NULL UNIQUE REFERENCES memory_sources(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'complete', 'failed')),
+      attempts INTEGER NOT NULL DEFAULT 0, available_at TEXT NOT NULL,
+      last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS memory_jobs_ready ON memory_jobs(status, available_at, created_at);
+    CREATE TABLE IF NOT EXISTS memory_candidates (
+      id TEXT PRIMARY KEY, source_id TEXT NOT NULL, note_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL, subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT NOT NULL,
+      category TEXT NOT NULL, confidence REAL NOT NULL, volatility TEXT NOT NULL,
+      evidence TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS memory_candidates_fingerprint ON memory_candidates(fingerprint);
+    CREATE INDEX IF NOT EXISTS memory_candidates_conversation ON memory_candidates(conversation_id, created_at);
+    CREATE TABLE IF NOT EXISTS structured_memories (
+      id TEXT PRIMARY KEY, source_id TEXT NOT NULL, note_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL, subject TEXT NOT NULL, predicate TEXT NOT NULL, object TEXT NOT NULL,
+      category TEXT NOT NULL, confidence REAL NOT NULL, volatility TEXT NOT NULL,
+      evidence TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL,
+      created_at TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS structured_memories_fingerprint ON structured_memories(fingerprint) WHERE status = 'active';
+    CREATE INDEX IF NOT EXISTS structured_memories_lookup ON structured_memories(subject, predicate, status);
+    CREATE TABLE IF NOT EXISTS memory_revisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, memory_id TEXT NOT NULL, candidate_id TEXT,
+      action TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS forget_tombstones (
+      fingerprint TEXT PRIMARY KEY, scope TEXT NOT NULL, created_at TEXT NOT NULL
+    );
   `);
+  // A previous process may have stopped mid-extraction. Its durable jobs are safe to retry.
+  db.exec(`UPDATE memory_jobs SET status = 'pending', updated_at = datetime('now') WHERE status = 'processing'`);
+  // Notes from earlier versions remain useful. Backfill them without another model call.
+  const legacyNotes = db.prepare(`SELECT n.* FROM notes n
+    LEFT JOIN structured_memories m ON m.note_id = n.id WHERE m.id IS NULL`).all() as unknown as NoteRow[];
+  for (const old of legacyNotes) {
+    const fingerprint = memoryFingerprint(old.topic, "states", old.claim);
+    if (db.prepare(`SELECT 1 FROM forget_tombstones WHERE fingerprint=?`).get(fingerprint)) continue;
+    const id = `legacy:${old.id}`;
+    const candidate: MemoryCandidate = {
+      id, sourceId: `legacy:${old.id}`, noteId: old.id, conversationId: old.conversation_id,
+      subject: old.topic, predicate: "states", object: old.claim, category: "research_finding",
+      confidence: .7, volatility: old.volatility, evidence: JSON.parse(old.sources) as string[],
+      fingerprint, createdAt: old.created_at,
+    };
+    const exists = db.prepare(`SELECT 1 FROM structured_memories WHERE fingerprint=? AND status='active'`).get(fingerprint);
+    insertCandidate(db, candidate, exists ? "duplicate" : "active", JSON.stringify(candidate.evidence));
+    if (exists) continue;
+    // Two legacy notes may normalize to one fingerprint; one authoritative copy is enough.
+    insertStructured(db, candidate, JSON.stringify(candidate.evidence));
+  }
 
   return {
     async save(msg) {
@@ -160,10 +258,146 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     async clearProfile(id = "default") {
       db.prepare(`DELETE FROM user_profiles WHERE id = ?`).run(id);
     },
+    async enqueueIngestion(source: MemoryIngestionSource) {
+      const jobId = `job:${source.id}`;
+      const queuedAt = new Date().toISOString();
+      db.exec("BEGIN");
+      try {
+        db.prepare(`INSERT OR IGNORE INTO memory_sources(id, conversation_id, source_json, status, created_at, updated_at)
+          VALUES (?, ?, ?, 'pending', ?, ?)`)
+          .run(source.id, source.conversationId, JSON.stringify(source), source.createdAt, source.createdAt);
+        db.prepare(`INSERT OR IGNORE INTO memory_jobs(id, source_id, status, attempts, available_at, created_at, updated_at)
+          VALUES (?, ?, 'pending', 0, ?, ?, ?)`)
+          .run(jobId, source.id, queuedAt, queuedAt, queuedAt);
+        db.exec("COMMIT");
+        return jobId;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    async claimIngestion(): Promise<MemoryIngestionJob | null> {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const now = new Date().toISOString();
+        const row = db.prepare(`SELECT j.id, s.source_json, j.attempts
+          FROM memory_jobs j JOIN memory_sources s ON s.id = j.source_id
+          WHERE j.status = 'pending' AND j.available_at <= ? AND j.attempts < 3
+          ORDER BY j.created_at LIMIT 1`).get(now) as JobRow | undefined;
+        if (!row) { db.exec("COMMIT"); return null; }
+        db.prepare(`UPDATE memory_jobs SET status='processing', attempts=attempts+1, updated_at=? WHERE id=?`)
+          .run(now, row.id);
+        db.prepare(`UPDATE memory_sources SET status='processing', updated_at=?
+          WHERE id=(SELECT source_id FROM memory_jobs WHERE id=?)`).run(now, row.id);
+        db.exec("COMMIT");
+        return { id: row.id, source: JSON.parse(row.source_json) as MemoryIngestionSource, attempts: row.attempts + 1 };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    async completeIngestion(jobId) {
+      const now = new Date().toISOString();
+      db.prepare(`UPDATE memory_jobs SET status='complete', last_error=NULL, updated_at=? WHERE id=?`).run(now, jobId);
+      db.prepare(`UPDATE memory_sources SET status='complete', updated_at=?
+        WHERE id=(SELECT source_id FROM memory_jobs WHERE id=?)`).run(now, jobId);
+    },
+    async failIngestion(jobId, error) {
+      const now = new Date().toISOString();
+      const row = db.prepare(`SELECT attempts FROM memory_jobs WHERE id=?`).get(jobId) as { attempts: number } | undefined;
+      const status = (row?.attempts ?? 3) >= 3 ? "failed" : "pending";
+      db.prepare(`UPDATE memory_jobs SET status=?, last_error=?, available_at=?, updated_at=? WHERE id=?`)
+        .run(status, error.slice(0, 500), now, now, jobId);
+      db.prepare(`UPDATE memory_sources SET status=?, updated_at=?
+        WHERE id=(SELECT source_id FROM memory_jobs WHERE id=?)`).run(status, now, jobId);
+    },
+    async resolveCandidate(candidate): Promise<CandidateResolution> {
+      const evidence = JSON.stringify(candidate.evidence);
+      db.exec("BEGIN");
+      try {
+        const tombstone = db.prepare(`SELECT 1 FROM forget_tombstones WHERE fingerprint=?`).get(candidate.fingerprint);
+        if (tombstone) {
+          insertCandidate(db, candidate, "rejected", evidence);
+          db.exec("COMMIT");
+          return { action: "rejected" };
+        }
+        const exact = db.prepare(`SELECT id FROM structured_memories WHERE fingerprint=? AND status='active'`)
+          .get(candidate.fingerprint) as { id: string } | undefined;
+        if (exact) {
+          insertCandidate(db, candidate, "duplicate", evidence);
+          db.prepare(`INSERT INTO memory_revisions(memory_id, candidate_id, action, created_at) VALUES (?, ?, 'duplicate', ?)`)
+            .run(exact.id, candidate.id, candidate.createdAt);
+          db.exec("COMMIT");
+          return { action: "duplicate", memoryId: exact.id };
+        }
+        const supersedable = candidate.category !== "research_finding";
+        const prior = supersedable
+          ? db.prepare(`SELECT id FROM structured_memories
+              WHERE lower(subject)=lower(?) AND predicate=? AND status='active' ORDER BY created_at DESC LIMIT 1`)
+              .get(candidate.subject, candidate.predicate) as { id: string } | undefined
+          : undefined;
+        insertCandidate(db, candidate, "active", evidence);
+        if (prior) {
+          db.prepare(`UPDATE structured_memories SET status='superseded', valid_to=? WHERE id=?`)
+            .run(candidate.createdAt, prior.id);
+          db.prepare(`INSERT INTO memory_revisions(memory_id, candidate_id, action, created_at) VALUES (?, ?, 'superseded', ?)`)
+            .run(prior.id, candidate.id, candidate.createdAt);
+        }
+        insertStructured(db, candidate, evidence);
+        db.prepare(`INSERT INTO memory_revisions(memory_id, candidate_id, action, created_at) VALUES (?, ?, 'inserted', ?)`)
+          .run(candidate.id, candidate.id, candidate.createdAt);
+        db.exec("COMMIT");
+        return { action: prior ? "superseded" : "inserted", memoryId: candidate.id };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+    async activeMemories(query = "", limit = 20) {
+      const count = Math.min(Math.max(0, Math.floor(limit)), 100);
+      const term = `%${query.trim().toLowerCase()}%`;
+      const rows = query.trim()
+        ? db.prepare(`SELECT * FROM structured_memories WHERE status='active'
+            AND (lower(subject) LIKE ? OR lower(object) LIKE ?) ORDER BY created_at DESC LIMIT ?`).all(term, term, count)
+        : db.prepare(`SELECT * FROM structured_memories WHERE status='active' ORDER BY created_at DESC LIMIT ?`).all(count);
+      return (rows as unknown as StructuredRow[]).map(structured);
+    },
+    async forgetMemories(ids) {
+      const unique = [...new Set(ids)].slice(0, 50);
+      if (!unique.length) return 0;
+      let forgotten = 0;
+      db.exec("BEGIN");
+      try {
+        for (const id of unique) {
+          const row = db.prepare(`SELECT fingerprint, note_id, source_id FROM structured_memories WHERE id=? AND status='active'`)
+            .get(id) as { fingerprint: string; note_id: string; source_id: string } | undefined;
+          if (!row) continue;
+          db.prepare(`INSERT OR IGNORE INTO forget_tombstones(fingerprint, scope, created_at) VALUES (?, 'memory', ?)`)
+            .run(row.fingerprint, new Date().toISOString());
+          db.prepare(`DELETE FROM rechecks WHERE note_id=?`).run(row.note_id);
+          db.prepare(`DELETE FROM notes WHERE id=?`).run(row.note_id);
+          db.prepare(`DELETE FROM memory_revisions WHERE memory_id=? OR candidate_id=?`).run(id, id);
+          db.prepare(`DELETE FROM memory_candidates WHERE id=?`).run(id);
+          forgotten += Number(db.prepare(`DELETE FROM structured_memories WHERE id=?`).run(id).changes);
+          db.prepare(`DELETE FROM memory_sources WHERE id=?`).run(row.source_id);
+        }
+        db.exec("COMMIT");
+        return forgotten;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
     async deleteConversation(conversationId) {
       // Delete derived memory with its transcript so it cannot affect later answers.
       db.exec("BEGIN");
       try {
+        db.prepare(`DELETE FROM memory_revisions WHERE memory_id IN
+          (SELECT id FROM structured_memories WHERE conversation_id=?) OR candidate_id IN
+          (SELECT id FROM memory_candidates WHERE conversation_id=?)`).run(conversationId, conversationId);
+        db.prepare(`DELETE FROM structured_memories WHERE conversation_id = ?`).run(conversationId);
+        db.prepare(`DELETE FROM memory_candidates WHERE conversation_id = ?`).run(conversationId);
+        db.prepare(`DELETE FROM memory_sources WHERE conversation_id = ?`).run(conversationId);
         db.prepare(`DELETE FROM rechecks WHERE conversation_id = ?`).run(conversationId);
         db.prepare(`DELETE FROM notes WHERE conversation_id = ?`).run(conversationId);
         db.prepare(`DELETE FROM messages WHERE conversation_id = ?`).run(conversationId);
@@ -176,7 +410,8 @@ export function createSqliteMemory(file = path.resolve("data/memory.sqlite")): N
     async clear() {
       db.exec("BEGIN");
       try {
-        db.exec("DELETE FROM rechecks; DELETE FROM notes; DELETE FROM messages;");
+        db.exec(`DELETE FROM memory_revisions; DELETE FROM structured_memories; DELETE FROM memory_candidates;
+          DELETE FROM memory_sources; DELETE FROM forget_tombstones; DELETE FROM rechecks; DELETE FROM notes; DELETE FROM messages;`);
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");

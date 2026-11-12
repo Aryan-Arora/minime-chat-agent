@@ -9,6 +9,8 @@
 import { randomUUID } from "node:crypto";
 import { resolveDate } from "../memory/dates.js";
 import { diffSnapshots } from "../memory/ledger.js";
+import { assessRelevance, candidateFromNote } from "../memory/ingestion.js";
+import { buildProfilePrompt } from "../memory/preferences.js";
 import {
   buildNoteExtractionPrompt,
   buildSnapshotExtractionPrompt,
@@ -19,8 +21,8 @@ import {
   snapshotFromNoteExtraction,
 } from "../memory/notes.js";
 import type {
-  MemoryNote, MemoryStore, Message, ModelAdapter, NoteMemoryStore, SearchResult,
-  SearchTool, SnapshotChange, Usage,
+  MemoryIngestionSource, MemoryNote, MemoryStore, Message, ModelAdapter, NoteMemoryStore, SearchResult,
+  SearchTool, SnapshotChange, Usage, UserProfile,
 } from "../types.js";
 
 export type AgentEvent =
@@ -130,6 +132,54 @@ export async function waitForMemoryTasks(conversationId?: string): Promise<void>
   else await Promise.allSettled([...pendingMemory.values()]);
 }
 
+async function drainIngestionJobs(deps: AgentDeps, store: NoteMemoryStore): Promise<void> {
+  while (true) {
+    const job = await store.claimIngestion();
+    if (!job) return;
+    try {
+      const relevance = assessRelevance(job.source);
+      if (relevance.outcome === "reject") { await store.completeIngestion(job.id); continue; }
+      const rawNote = await deps.fast.complete({
+        system: NOTE_EXTRACTION_SYSTEM,
+        messages: [{
+          role: "user",
+          content: buildNoteExtractionPrompt(job.source.user, job.source.assistant, {
+            ...(job.source.query ? { query: job.source.query } : {}), sources: job.source.sources,
+          }),
+        }],
+        maxTokens: 1400,
+        effort: "low",
+        onUsage: (usage) => deps.onUsage?.(deps.fast.name, usage),
+      });
+      const parsed = parseNoteExtraction(rawNote, {
+        // Stable across retries so a crash cannot create two notes for one source.
+        id: `note:${job.source.id}`, conversationId: job.source.conversationId, createdAt: job.source.assistant.createdAt,
+      });
+      if (parsed) {
+        const savedNote: MemoryNote = {
+          ...parsed,
+          ...(job.source.query ? { query: job.source.query } : {}),
+          sources: job.source.sources.length ? job.source.sources : parsed.sources,
+        };
+        await store.saveNote(savedNote);
+        await store.resolveCandidate(candidateFromNote(job.source, savedNote, relevance));
+        const snapshot = snapshotFromNoteExtraction(rawNote);
+        if (savedNote.volatility === "volatile" && savedNote.query && Object.keys(snapshot).length) {
+          await store.saveRecheck({
+            id: randomUUID(), noteId: savedNote.id, conversationId: job.source.conversationId,
+            createdAt: savedNote.createdAt, query: savedNote.query, snapshot,
+          });
+        }
+      }
+      await store.completeIngestion(job.id);
+    } catch (error) {
+      await store.failIngestion(job.id, error instanceof Error ? error.message : String(error));
+      console.warn("[memory] durable ingestion failed:", error instanceof Error ? error.message : error);
+      return; // retry on the next request instead of spinning on a failing dependency
+    }
+  }
+}
+
 export async function runAgent(
   deps: AgentDeps,
   conversationId: string,
@@ -144,8 +194,12 @@ export async function runAgent(
   const track = (m: ModelAdapter) => (u: Usage) => deps.onUsage?.(m.name, u);
   try {
     const crossChatRecall = CROSS_CHAT_CUE.test(userText);
+    const compact = noteStore(deps.memory);
     // Cross-chat recall must also see extraction that just finished in another chat.
     await waitForMemoryTasks(crossChatRecall ? undefined : conversationId);
+    if (compact && (crossChatRecall || PAST_CUE.test(userText) || resolveDate(userText, now))) {
+      await drainIngestionJobs(deps, compact); // recover jobs left by an earlier process
+    }
     const userMsg: Message = {
       id: randomUUID(), role: "user", content: userText, createdAt: now.toISOString(), conversationId,
     };
@@ -153,7 +207,6 @@ export async function runAgent(
 
     // Memory lookup happens BEFORE saving this message, so "today" doesn't echo it back.
     const range = resolveDate(userText, now);
-    const compact = noteStore(deps.memory);
     const shouldRecall = Boolean(range || PAST_CUE.test(userText) || crossChatRecall);
     // Note retrieval and recent-chat loading are independent and run together.
     const [retrievedNotes, recent] = await Promise.all([
@@ -339,44 +392,13 @@ export async function runAgent(
     });
     emit({ type: "done" });
     if (compact) {
-      const task = (async () => {
-        try {
-        const rawNote = await deps.fast.complete({
-          system: NOTE_EXTRACTION_SYSTEM,
-          messages: [{
-            role: "user",
-            content: buildNoteExtractionPrompt(userMsg, assistantMsg, {
-              ...(query ? { query } : {}),
-              sources: results.map((result) => result.url),
-            }),
-          }],
-          maxTokens: 1400,
-          effort: "low",
-          onUsage: track(deps.fast),
-        });
-        const parsed = parseNoteExtraction(rawNote, {
-          id: randomUUID(), conversationId, createdAt: assistantMsg.createdAt,
-        });
-        if (parsed) {
-          const savedNote: MemoryNote = {
-            ...parsed,
-            ...(query ? { query } : {}),
-            sources: results.length ? results.map((result) => result.url) : parsed.sources,
-          };
-          await compact.saveNote(savedNote);
-          const snapshot = snapshotFromNoteExtraction(rawNote);
-          if (savedNote.volatility === "volatile" && savedNote.query && Object.keys(snapshot).length) {
-            await compact.saveRecheck({
-              id: randomUUID(), noteId: savedNote.id, conversationId,
-              createdAt: assistantMsg.createdAt, query: savedNote.query, snapshot,
-            });
-          }
-        }
-        } catch (error) {
-        // The answer is already safely stored; extraction failure must not fail the turn.
-        console.warn("[memory] note extraction failed:", error instanceof Error ? error.message : error);
-        }
-      })();
+      const source: MemoryIngestionSource = {
+        id: randomUUID(), conversationId, user: userMsg, assistant: assistantMsg,
+        ...(query ? { query } : {}), sources: results.map((result) => result.url),
+        createdAt: assistantMsg.createdAt,
+      };
+      await compact.enqueueIngestion(source); // persisted before background processing starts
+      const task = drainIngestionJobs(deps, compact);
       pendingMemory.set(conversationId, task);
       void task.finally(() => {
         if (pendingMemory.get(conversationId) === task) pendingMemory.delete(conversationId);
