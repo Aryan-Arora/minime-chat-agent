@@ -98,3 +98,42 @@ test("SQLite stores an inspectable user profile separately from conversations", 
   assert.equal(await memory.getProfile(), null);
   memory.close();
 });
+
+test("a new chat can immediately summarize the previous chat", async () => {
+  const memory = createSqliteMemory(":memory:");
+  const contexts: string[] = [];
+  const model: ModelAdapter = {
+    name: "cross-chat-test",
+    async complete(req) {
+      if (req.system.includes("Extract one compact memory note")) {
+        return JSON.stringify({
+          topic: "Mars launch plan", claim: "The launch plan uses a reusable rocket in 2028.",
+          sources: [], volatility: "stable", snapshot: {},
+        });
+      }
+      return "NO";
+    },
+    async *stream(req) {
+      contexts.push(req.context ?? "");
+      yield contexts.length === 1
+        ? "The Mars launch plan uses a reusable rocket in 2028."
+        : "Your previous chat discussed the Mars launch plan.";
+    },
+  };
+  const search: SearchTool = { async search() { return []; } };
+  const now = () => new Date("2026-11-12T10:00:00Z");
+
+  await runAgent({ fast: model, main: model, search, memory, now }, "chat-a", "Plan a Mars launch", () => {});
+  const events: AgentEvent[] = [];
+  await runAgent(
+    { fast: model, main: model, search, memory, now },
+    "chat-b",
+    "Summarize my previous chat",
+    (event) => events.push(event),
+  );
+
+  assert.match(contexts[1], /Plan a Mars launch/);
+  assert.ok(events.some((event) => event.type === "memory"));
+  await waitForMemoryTasks();
+  memory.close();
+});

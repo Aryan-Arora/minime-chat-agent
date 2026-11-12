@@ -117,6 +117,7 @@ function noteStore(memory: MemoryStore): NoteMemoryStore | null {
 }
 
 const PAST_CUE = /\b(remember|earlier|previous|before|last time|we discussed|we decided|i asked|you said|re-?check|changed since|still)\b/i;
+const CROSS_CHAT_CUE = /\b(summar(?:y|ize)|recap|other chat|previous chat|last chat|past chat|earlier chat|another chat|conversation)\b/i;
 const RECHECK_CUE = /\b(re-?check|changed|change since|still|now|current|latest|today)\b/i;
 const FRESH_CUE = /\b(latest|current|today|news|price|pricing|version|release|available|availability)\b/i;
 const AMBIGUOUS_REFERENCE = /\b(it|they|them|that|those|one|ones|second|first|best)\b/i;
@@ -142,8 +143,9 @@ export async function runAgent(
   const now = (deps.now ?? (() => new Date()))();
   const track = (m: ModelAdapter) => (u: Usage) => deps.onUsage?.(m.name, u);
   try {
-    // A fast follow-up must see the note from the turn that just finished streaming.
-    await waitForMemoryTasks(conversationId);
+    const crossChatRecall = CROSS_CHAT_CUE.test(userText);
+    // Cross-chat recall must also see extraction that just finished in another chat.
+    await waitForMemoryTasks(crossChatRecall ? undefined : conversationId);
     const userMsg: Message = {
       id: randomUUID(), role: "user", content: userText, createdAt: now.toISOString(), conversationId,
     };
@@ -152,14 +154,25 @@ export async function runAgent(
     // Memory lookup happens BEFORE saving this message, so "today" doesn't echo it back.
     const range = resolveDate(userText, now);
     const compact = noteStore(deps.memory);
-    const shouldRecall = Boolean(range || PAST_CUE.test(userText));
+    const shouldRecall = Boolean(range || PAST_CUE.test(userText) || crossChatRecall);
     // Note retrieval and recent-chat loading are independent and run together.
     const [retrievedNotes, recent] = await Promise.all([
       compact && shouldRecall ? compact.retrieve(userText, range ?? undefined, 5) : Promise.resolve([]),
       deps.memory.recent(200),
     ]);
-    // Old history may predate note extraction, so raw dated messages are a temporary fallback.
-    const pastChat = !retrievedNotes.length && range ? await deps.memory.between(range.from, range.to) : [];
+    // Generic "previous chat" requests have no topic for FTS. Fall back to the newest
+    // conversation other than this one; topic-specific requests still prefer compact notes.
+    const otherMessages = crossChatRecall
+      ? recent.filter((message) => message.conversationId !== conversationId)
+      : [];
+    const previousConversationId = otherMessages.at(-1)?.conversationId;
+    const previousChat = previousConversationId
+      ? otherMessages.filter((message) => message.conversationId === previousConversationId)
+      : [];
+    // Old history may predate note extraction, so raw messages remain a reliable fallback.
+    const pastChat = !retrievedNotes.length && range
+      ? await deps.memory.between(range.from, range.to)
+      : !retrievedNotes.length && crossChatRecall ? previousChat : [];
     const thisChat = recent.filter((m) => m.conversationId === conversationId).slice(-10);
     memoryDone = performance.now();
     if (retrievedNotes.length) {
@@ -168,8 +181,13 @@ export async function runAgent(
         text: `${retrievedNotes.length} relevant note${retrievedNotes.length === 1 ? "" : "s"}`,
         notes: retrievedNotes.map(({ topic, claim, createdAt, volatility }) => ({ topic, claim, createdAt, volatility })),
       });
-    } else if (pastChat.length && range) {
-      emit({ type: "memory", text: `${pastChat.length} messages from ${range.label}` });
+    } else if (pastChat.length) {
+      emit({
+        type: "memory",
+        text: range
+          ? `${pastChat.length} messages from ${range.label}`
+          : `${pastChat.length} messages from your previous conversation`,
+      });
     }
     await deps.memory.save(userMsg);
 
